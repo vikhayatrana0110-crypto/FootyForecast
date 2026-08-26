@@ -12,12 +12,12 @@ from src.features.match_features import MatchFeatureEngine
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Directories searched for .joblib artifacts, in priority order.
-# src/app/models is the copy committed to the repo, so it is the one that exists
-# on a fresh clone and on the deployed app; models/ is where run_pipeline.py
-# writes when training locally.
+# src/app/models is the tracked copy that the training pipeline writes to and the
+# deployed app reads from, so it is checked first. models/ is only a fallback for
+# older local checkouts that still have artifacts from a previous layout.
 MODEL_SEARCH_DIRS = (
-    os.path.join(PROJECT_ROOT, 'models'),
     os.path.join(PROJECT_ROOT, 'src', 'app', 'models'),
+    os.path.join(PROJECT_ROOT, 'models'),
 )
 
 
