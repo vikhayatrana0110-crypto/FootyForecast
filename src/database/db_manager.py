@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy import select, and_, or_, desc
+from sqlalchemy import select, and_, or_, desc, text
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -82,6 +82,24 @@ class DatabaseManager:
 
     def init_db(self):
         create_all_tables(self.engine)
+        self._apply_column_migrations()
+
+    def _apply_column_migrations(self):
+        """
+        Add columns introduced after a table was first created.
+
+        create_all_tables() only creates missing *tables*, so a new column on an
+        existing table would otherwise never appear on a deployed database. Each
+        statement is guarded by IF NOT EXISTS, so this is safe to run on every
+        startup and on a database that is already up to date.
+        """
+        statements = [
+            "ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS mae DOUBLE PRECISION",
+            "ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS rmse DOUBLE PRECISION",
+        ]
+        with self.engine.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
 
     def bulk_insert_matches(self, df: pd.DataFrame):
         """Bulk insert raw matches from a DataFrame."""
@@ -313,7 +331,14 @@ class DatabaseManager:
                 session.close()
 
     def save_model_version(self, name: str, version: str, metrics: Dict[str, float], model_path: str) -> int:
-        """Save training metrics and metadata for a model version."""
+        """
+        Save training metrics and metadata for a model version.
+
+        Metrics are routed to the column that matches them: classifiers populate
+        accuracy/log_loss/f1_score, regressors populate mae/rmse, and whichever
+        set does not apply stays NULL. Anything absent from `metrics` is simply
+        not written, so callers pass only what they actually measured.
+        """
         session = self.get_session()
         try:
             # Set all other models of this name to inactive
@@ -328,6 +353,8 @@ class DatabaseManager:
                 accuracy=metrics.get('accuracy'),
                 log_loss=metrics.get('log_loss'),
                 f1_score=metrics.get('f1_macro'),
+                mae=metrics.get('mae'),
+                rmse=metrics.get('rmse'),
                 model_path=model_path,
                 is_active=True
             )

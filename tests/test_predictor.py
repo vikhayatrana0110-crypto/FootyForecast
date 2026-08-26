@@ -63,5 +63,54 @@ class TestPredictorAndExplainer(unittest.TestCase):
         self.assertIn('explanation_text', explanation)
         self.assertTrue(len(explanation['positive_factors']) > 0)
 
+    def test_explainer_uses_real_shap_with_a_real_model(self):
+        """SHAP values must actually be produced, not silently fall back.
+
+        explain_prediction() wraps its SHAP path in a broad `except`, so a bug in
+        that path degrades to the heuristic without surfacing an error. A
+        `list.sort(ascending=...)` TypeError hid there and meant real SHAP values
+        were never returned. An empty `shap_values` dict is the fallback's
+        signature, so assert it is populated.
+        """
+        try:
+            import shap  # noqa: F401
+            import xgboost as xgb
+        except ImportError:
+            self.skipTest("shap/xgboost not installed")
+
+        import numpy as np
+        from src.features.match_features import MatchFeatureEngine
+
+        cols = MatchFeatureEngine().get_feature_columns()
+        rng = np.random.default_rng(0)
+        X = pd.DataFrame(rng.normal(size=(120, len(cols))), columns=cols)
+        y = rng.integers(0, 3, size=120)
+        model = xgb.XGBClassifier(n_estimators=8, max_depth=2, verbosity=0).fit(X, y)
+
+        explainer = MatchExplainer(model)
+        if explainer.explainer is None:
+            self.skipTest("TreeExplainer unavailable for this model type")
+
+        result = explainer.explain_prediction(X.head(1), cols, 2)
+        self.assertTrue(result['shap_values'],
+                        "explain_prediction fell back to the heuristic instead of using SHAP")
+
+        # Negative factors must run most-negative first.
+        negs = [f['shap_value'] for f in result['negative_factors']]
+        self.assertEqual(negs, sorted(negs), "negative factors are not sorted ascending")
+
+        # One record per feature, carrying all three class contributions.
+        records = explainer.explanation_records(X.head(1), cols)
+        self.assertEqual(len(records), len(cols))
+        for r in records:
+            self.assertIn('shap_value_home', r)
+            self.assertIn('shap_value_draw', r)
+            self.assertIn('shap_value_away', r)
+
+    def test_explanation_records_empty_without_shap(self):
+        """Heuristic constants must never be persisted as if they were SHAP values."""
+        explainer = MatchExplainer(self.mock_classifier)
+        self.assertEqual(explainer.explanation_records(pd.DataFrame(), []), [])
+
 if __name__ == '__main__':
     unittest.main()

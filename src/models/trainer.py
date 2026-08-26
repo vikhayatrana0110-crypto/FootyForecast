@@ -198,22 +198,14 @@ class ModelTrainer:
                 db_manager.save_model_version(
                     name='home_goals_regressor',
                     version=version,
-                    metrics={
-                        'accuracy': hg_metrics['mae'], # store MAE in accuracy column
-                        'log_loss': hg_metrics['rmse'], # store RMSE in log_loss column
-                        'f1_macro': 0.0
-                    },
+                    metrics=hg_metrics,
                     model_path=hg_path
                 )
                 
                 db_manager.save_model_version(
                     name='away_goals_regressor',
                     version=version,
-                    metrics={
-                        'accuracy': ag_metrics['mae'],
-                        'log_loss': ag_metrics['rmse'],
-                        'f1_macro': 0.0
-                    },
+                    metrics=ag_metrics,
                     model_path=ag_path
                 )
                 
