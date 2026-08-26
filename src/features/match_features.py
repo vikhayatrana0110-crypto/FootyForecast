@@ -64,6 +64,79 @@ def compute_h2h(matches_df: pd.DataFrame, team_a: str, team_b: str, before_date:
                 
     return float(np.mean(points))
 
+def compute_h2h_series(matches_df: pd.DataFrame, max_matches: int = 10) -> pd.Series:
+    """
+    Head-to-head advantage for every match in one pass.
+
+    Equivalent to calling compute_h2h() per row, but linear instead of quadratic:
+    the per-row version rescans the whole match table for each of ~25k matches.
+    Here each fixture pair keeps a running history, so every match is touched once.
+
+    Matches are grouped by unordered team pair and walked in date order. Results
+    are stored from the perspective of the alphabetically-first team of the pair
+    and negated when the current home team is the other one - valid because the
+    scoring is symmetric (+1 win / 0 draw / -1 loss).
+
+    One deliberate difference from compute_h2h(): when the same pair met more than
+    once on the date that falls exactly on the max_matches cutoff, compute_h2h()
+    picks which of those meetings to keep via an unstable sort, so its answer is
+    arbitrary. This walks them in row order instead, which is deterministic. The
+    two agree on every real fixture, where a pair does not meet twice in one day.
+
+    Returns a Series aligned to matches_df.index.
+    """
+    dates = pd.to_datetime(matches_df['date']).values
+    home = matches_df['home_team'].values
+    away = matches_df['away_team'].values
+    h_score = matches_df['home_score'].values
+    away_score = matches_df['away_score'].values
+
+    # Group row positions by unordered pair.
+    groups: Dict[tuple, List[int]] = {}
+    for pos in range(len(matches_df)):
+        key = (home[pos], away[pos]) if home[pos] <= away[pos] else (away[pos], home[pos])
+        groups.setdefault(key, []).append(pos)
+
+    out = np.zeros(len(matches_df), dtype=float)
+
+    for (team_a, _team_b), positions in groups.items():
+        # Chronological order within the pair.
+        positions.sort(key=lambda p: dates[p])
+        history: List[float] = []
+
+        i = 0
+        n = len(positions)
+        while i < n:
+            # Take every meeting on the same date together, so that same-day
+            # fixtures cannot see each other's results.
+            j = i
+            while j < n and dates[positions[j]] == dates[positions[i]]:
+                j += 1
+
+            window = history[-max_matches:]
+            if window:
+                mean_pts = sum(window) / len(window)
+                for k in range(i, j):
+                    pos = positions[k]
+                    out[pos] = mean_pts if home[pos] == team_a else -mean_pts
+            # else: leave 0.0, matching compute_h2h() on an empty history
+
+            # Only now fold this date's results into the history.
+            for k in range(i, j):
+                pos = positions[k]
+                if h_score[pos] > away_score[pos]:
+                    pts = 1.0
+                elif h_score[pos] < away_score[pos]:
+                    pts = -1.0
+                else:
+                    pts = 0.0
+                history.append(pts if home[pos] == team_a else -pts)
+
+            i = j
+
+    return pd.Series(out, index=matches_df.index)
+
+
 class MatchFeatureEngine:
     def __init__(self, team_feature_engine: Any = None):
         self.team_feature_engine = team_feature_engine
@@ -120,25 +193,8 @@ class MatchFeatureEngine:
         matches['goals_scored_diff'] = matches['home_goals_scored_avg'] - matches['away_goals_scored_avg']
         matches['goals_conceded_diff'] = matches['home_goals_conceded_avg'] - matches['away_goals_conceded_avg']
         
-        # H2H advantage: we need to run compute_h2h for each match
-        print("Calculating H2H advantage for all matches (this may take a minute)...")
-        h2h_values = []
-        # Let's optimize H2H calculation by caching or using pre-indexed lookup,
-        # but for simplicity we will do a loop. Since dataset starts post-2000 it is ~20,000 matches.
-        # To make it fast, we will calculate head-to-head advantage.
-        # Let's build a quick dictionary of past matches to speed up h2h.
-        match_history = matches[['date', 'home_team', 'away_team', 'home_score', 'away_score']].copy()
-        match_history['date'] = pd.to_datetime(match_history['date'])
-        
-        for idx, row in matches.iterrows():
-            # For speed, compute H2H by filtering our existing match history
-            home_t = row['home_team']
-            away_t = row['away_team']
-            m_date = row['date']
-            h2h_val = compute_h2h(match_history, home_t, away_t, before_date=m_date)
-            h2h_values.append(h2h_val)
-            
-        matches['h2h_advantage'] = h2h_values
+        print("Calculating H2H advantage for all matches...")
+        matches['h2h_advantage'] = compute_h2h_series(matches, max_matches=10)
         matches['is_neutral_venue'] = matches['neutral'].astype(int)
         matches['tournament_importance'] = matches['tournament'].apply(get_tournament_importance)
         

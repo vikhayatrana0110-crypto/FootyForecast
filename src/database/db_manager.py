@@ -2,9 +2,10 @@ import os
 import pandas as pd
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
+from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy import select, and_, or_, desc
+from sqlalchemy import select, and_, or_, desc, text
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -15,16 +16,45 @@ from src.database.models import (
 )
 
 class DatabaseManager:
-    def __init__(self, db_path: str = None):
-        # Supabase PostgreSQL connection (or fallback to env vars)
-        DB_HOST = os.getenv("SUPABASE_HOST", "db.jyeuiytzfdpvhzxqzosg.supabase.co")
+    def __init__(self):
+        """
+        Connect to the Supabase PostgreSQL database.
+
+        Connection details come from the environment (loaded from .env locally,
+        or injected from st.secrets by the Streamlit app). Nothing is hardcoded:
+        the repository is public, so the host must not be committed.
+        """
+        # Host and password identify and unlock the database, so they have no
+        # defaults - a missing value must fail loudly rather than silently
+        # connecting somewhere unintended.
+        DB_HOST = os.getenv("SUPABASE_HOST")
+        DB_PASSWORD = os.getenv("SUPABASE_PASSWORD")
+
+        # These are Supabase conventions, not secrets, so defaults are safe.
         DB_PORT = os.getenv("SUPABASE_PORT", "5432")
         DB_USER = os.getenv("SUPABASE_USER", "postgres")
-        DB_PASSWORD = os.getenv("SUPABASE_PASSWORD", "")
         DB_NAME = os.getenv("SUPABASE_DB", "postgres")
-        
-        DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        
+
+        missing = [
+            name for name, value in (
+                ("SUPABASE_HOST", DB_HOST),
+                ("SUPABASE_PASSWORD", DB_PASSWORD),
+            ) if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "Missing required database configuration: " + ", ".join(missing) + ". "
+                "Set these in a local .env file, or in the app's Streamlit secrets "
+                "when deploying."
+            )
+
+        # Credentials are percent-encoded: an unescaped '@', ':' or '/' in the
+        # password would otherwise be parsed as part of the URL structure.
+        DATABASE_URL = (
+            f"postgresql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}"
+            f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        )
+
         self.engine = create_engine(DATABASE_URL)
         self.SessionLocal = sessionmaker(bind=self.engine)
         self.session: Optional[Session] = None
@@ -49,6 +79,24 @@ class DatabaseManager:
 
     def init_db(self):
         create_all_tables(self.engine)
+        self._apply_column_migrations()
+
+    def _apply_column_migrations(self):
+        """
+        Add columns introduced after a table was first created.
+
+        create_all_tables() only creates missing *tables*, so a new column on an
+        existing table would otherwise never appear on a deployed database. Each
+        statement is guarded by IF NOT EXISTS, so this is safe to run on every
+        startup and on a database that is already up to date.
+        """
+        statements = [
+            "ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS mae DOUBLE PRECISION",
+            "ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS rmse DOUBLE PRECISION",
+        ]
+        with self.engine.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
 
     def bulk_insert_matches(self, df: pd.DataFrame):
         """Bulk insert raw matches from a DataFrame."""
@@ -280,7 +328,14 @@ class DatabaseManager:
                 session.close()
 
     def save_model_version(self, name: str, version: str, metrics: Dict[str, float], model_path: str) -> int:
-        """Save training metrics and metadata for a model version."""
+        """
+        Save training metrics and metadata for a model version.
+
+        Metrics are routed to the column that matches them: classifiers populate
+        accuracy/log_loss/f1_score, regressors populate mae/rmse, and whichever
+        set does not apply stays NULL. Anything absent from `metrics` is simply
+        not written, so callers pass only what they actually measured.
+        """
         session = self.get_session()
         try:
             # Set all other models of this name to inactive
@@ -295,6 +350,8 @@ class DatabaseManager:
                 accuracy=metrics.get('accuracy'),
                 log_loss=metrics.get('log_loss'),
                 f1_score=metrics.get('f1_macro'),
+                mae=metrics.get('mae'),
+                rmse=metrics.get('rmse'),
                 model_path=model_path,
                 is_active=True
             )
