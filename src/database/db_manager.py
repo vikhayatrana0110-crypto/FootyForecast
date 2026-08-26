@@ -335,29 +335,46 @@ class DatabaseManager:
         accuracy/log_loss/f1_score, regressors populate mae/rmse, and whichever
         set does not apply stays NULL. Anything absent from `metrics` is simply
         not written, so callers pass only what they actually measured.
+
+        A given model name and version occupies one row, updated in place. This
+        previously inserted unconditionally, so every pipeline run added three
+        rows describing the same three models - 51 rows for 3 models after 17
+        runs - which made the training history unreadable and hid the fact that
+        the recorded metrics no longer matched the committed artifacts.
+
+        Rows for earlier runs are left untouched rather than cleaned up here:
+        `predictions.model_id` points at them, so deleting them would orphan
+        prediction records.
         """
         session = self.get_session()
         try:
-            # Set all other models of this name to inactive
+            # Only one row per model name may be active.
             session.query(ModelVersion).filter(
                 ModelVersion.model_name == name
             ).update({ModelVersion.is_active: False})
-            
-            new_model = ModelVersion(
-                model_name=name,
-                version=version,
-                training_date=date.today(),
-                accuracy=metrics.get('accuracy'),
-                log_loss=metrics.get('log_loss'),
-                f1_score=metrics.get('f1_macro'),
-                mae=metrics.get('mae'),
-                rmse=metrics.get('rmse'),
-                model_path=model_path,
-                is_active=True
-            )
-            session.add(new_model)
+
+            # Reuse the row for this name and version if one exists. Where older
+            # duplicates are present, the most recent is the one carried forward.
+            record = session.query(ModelVersion).filter(
+                ModelVersion.model_name == name,
+                ModelVersion.version == version
+            ).order_by(desc(ModelVersion.model_id)).first()
+
+            if record is None:
+                record = ModelVersion(model_name=name, version=version)
+                session.add(record)
+
+            record.training_date = date.today()
+            record.accuracy = metrics.get('accuracy')
+            record.log_loss = metrics.get('log_loss')
+            record.f1_score = metrics.get('f1_macro')
+            record.mae = metrics.get('mae')
+            record.rmse = metrics.get('rmse')
+            record.model_path = model_path
+            record.is_active = True
+
             session.commit()
-            return new_model.model_id
+            return record.model_id
         except Exception as e:
             session.rollback()
             raise e
