@@ -2,9 +2,24 @@ import os
 import joblib
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, List, Optional, Union
 from src.database.db_manager import DatabaseManager
 from src.features.match_features import MatchFeatureEngine
+
+# Project root, resolved from this file rather than the current working directory,
+# so model lookups behave the same whether the app is launched from the repo root,
+# from src/app/, or by Streamlit Cloud.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Directories searched for .joblib artifacts, in priority order.
+# src/app/models is the copy committed to the repo, so it is the one that exists
+# on a fresh clone and on the deployed app; models/ is where run_pipeline.py
+# writes when training locally.
+MODEL_SEARCH_DIRS = (
+    os.path.join(PROJECT_ROOT, 'models'),
+    os.path.join(PROJECT_ROOT, 'src', 'app', 'models'),
+)
+
 
 class MatchPredictor:
     def __init__(
@@ -54,22 +69,50 @@ class MatchPredictor:
             ).first()
             if not model_record:
                 raise FileNotFoundError(f"No active database model found with name '{model_name}'")
-            return joblib.load(model_record.model_path)
+            stored_path = model_record.model_path
+
+        # model_path is recorded at training time and may be relative to whatever
+        # directory the pipeline ran in (or an absolute path from another machine),
+        # so it is not guaranteed to resolve here. Try it, then fall back to
+        # scanning the known model directories.
+        for candidate in (stored_path, os.path.join(PROJECT_ROOT, stored_path)):
+            if candidate and os.path.isfile(candidate):
+                return joblib.load(candidate)
+
+        return self._load_latest_local_model(model_name)
+
+    def _find_model_dirs(self) -> List[str]:
+        """Return the model search directories that actually exist."""
+        return [d for d in MODEL_SEARCH_DIRS if os.path.isdir(d)]
 
     def _load_latest_local_model(self, model_name: str) -> Any:
-        """Scan models/ directory for the latest model with the specified prefix."""
-        model_dir = 'models'
-        if not os.path.exists(model_dir):
-            raise FileNotFoundError(f"Model directory '{model_dir}' does not exist.")
-            
-        files = [f for f in os.listdir(model_dir) if f.startswith(model_name) and f.endswith('.joblib')]
-        if not files:
-            raise FileNotFoundError(f"No local model file starting with '{model_name}' found in '{model_dir}'")
-            
-        # Sort and take latest (which should match alphabetically/timestamp/version sorting)
-        files.sort()
-        path = os.path.join(model_dir, files[-1])
-        return joblib.load(path)
+        """Load the highest-versioned .joblib for model_name from the search directories."""
+        searched = self._find_model_dirs()
+        if not searched:
+            raise FileNotFoundError(
+                "No model directory found. Looked in: "
+                + ", ".join(MODEL_SEARCH_DIRS)
+                + ". Run `python run_pipeline.py` to train and save models."
+            )
+
+        matches = []
+        for model_dir in searched:
+            matches += [
+                os.path.join(model_dir, f)
+                for f in os.listdir(model_dir)
+                if f.startswith(model_name) and f.endswith('.joblib')
+            ]
+
+        if not matches:
+            raise FileNotFoundError(
+                f"No model file starting with '{model_name}' found in: "
+                + ", ".join(searched)
+                + ". Run `python run_pipeline.py` to train and save models."
+            )
+
+        # Sort by filename so the highest version suffix wins.
+        matches.sort(key=os.path.basename)
+        return joblib.load(matches[-1])
 
     def predict(self, feature_vector: Union[Dict[str, Any], pd.DataFrame]) -> Dict[str, Any]:
         """

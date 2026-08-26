@@ -2,6 +2,7 @@ import os
 import pandas as pd
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
+from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy import select, and_, or_, desc
@@ -16,15 +17,47 @@ from src.database.models import (
 
 class DatabaseManager:
     def __init__(self, db_path: str = None):
-        # Supabase PostgreSQL connection (or fallback to env vars)
-        DB_HOST = os.getenv("SUPABASE_HOST", "db.jyeuiytzfdpvhzxqzosg.supabase.co")
+        """
+        Connect to the Supabase PostgreSQL database.
+
+        Connection details come from the environment (loaded from .env locally,
+        or injected from st.secrets by the Streamlit app). Nothing is hardcoded:
+        the repository is public, so the host must not be committed.
+
+        Note: `db_path` is accepted for backwards compatibility with callers that
+        still pass a SQLite path. It is ignored - this manager is PostgreSQL-only.
+        """
+        # Host and password identify and unlock the database, so they have no
+        # defaults - a missing value must fail loudly rather than silently
+        # connecting somewhere unintended.
+        DB_HOST = os.getenv("SUPABASE_HOST")
+        DB_PASSWORD = os.getenv("SUPABASE_PASSWORD")
+
+        # These are Supabase conventions, not secrets, so defaults are safe.
         DB_PORT = os.getenv("SUPABASE_PORT", "5432")
         DB_USER = os.getenv("SUPABASE_USER", "postgres")
-        DB_PASSWORD = os.getenv("SUPABASE_PASSWORD", "")
         DB_NAME = os.getenv("SUPABASE_DB", "postgres")
-        
-        DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        
+
+        missing = [
+            name for name, value in (
+                ("SUPABASE_HOST", DB_HOST),
+                ("SUPABASE_PASSWORD", DB_PASSWORD),
+            ) if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "Missing required database configuration: " + ", ".join(missing) + ". "
+                "Set these in a local .env file, or in the app's Streamlit secrets "
+                "when deploying."
+            )
+
+        # Credentials are percent-encoded: an unescaped '@', ':' or '/' in the
+        # password would otherwise be parsed as part of the URL structure.
+        DATABASE_URL = (
+            f"postgresql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}"
+            f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        )
+
         self.engine = create_engine(DATABASE_URL)
         self.SessionLocal = sessionmaker(bind=self.engine)
         self.session: Optional[Session] = None
