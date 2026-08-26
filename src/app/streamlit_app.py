@@ -302,11 +302,28 @@ for col, label, val, color in [
                           title_text=f"xG: {label}", margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
+# Verdict. Stated with its probability rather than bare: a 37/29/34 split is a
+# near coin-flip, and showing "Away Win" alone reads as far more certain than the
+# model actually is.
+verdict      = pred.get("outcome", "")
+most_likely  = pred.get("most_likely_outcome", verdict)
+verdict_prob = {"Home Win": p_home, "Draw": p_draw, "Away Win": p_away}.get(verdict, 0.0)
+
+st.markdown(f"### Prediction: **{verdict}** ({verdict_prob:.1%})")
+if most_likely != verdict:
+    # The verdict came from the draw threshold rather than the top probability.
+    st.caption(
+        f"Called a draw because the draw probability ({p_draw:.1%}) is high for this "
+        f"fixture, though {most_likely.lower()} is the single most likely result."
+    )
+
 conf = pred["confidence"]
 conf_level = ("High Confidence" if conf > 0.35 else
               "Medium Confidence" if conf > 0.15 else
               "Low Confidence / Highly Competitive")
-st.markdown(f"### Confidence: **{conf_level}** ({conf:.1%})")
+st.markdown(f"**Separation between the top two outcomes: {conf:.1%}** - {conf_level}")
+if conf < 0.05:
+    st.caption("The top two outcomes are within 5 percentage points: treat this as closely matched rather than a firm call.")
 st.progress(min(1.0, conf / 0.6))
 
 # SHAP chart

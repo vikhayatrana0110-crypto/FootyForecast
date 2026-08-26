@@ -15,6 +15,25 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 # src/app/models is the tracked copy that the training pipeline writes to and the
 # deployed app reads from, so it is checked first. models/ is only a fallback for
 # older local checkouts that still have artifacts from a previous layout.
+# A draw is a common outcome (~24% of matches) but rarely the single most likely
+# one: draw probability tops out near 0.42 and usually sits second behind a home
+# or away win. Choosing the verdict by argmax therefore almost never returns
+# "Draw" - 32 times in 4652 test matches - even though the underlying probability
+# is reasonably calibrated.
+#
+# The verdict is a draw when its probability clears DRAW_VERDICT_THRESHOLD *and*
+# the leading side is no further than DRAW_VERDICT_MARGIN ahead of it. The margin
+# matters: on the threshold alone the rule fires on fixtures where one side is
+# 64% likely, which is not a draw by any reading. Requiring the match to be close
+# keeps almost all of the benefit at a fraction of the cost - on the 2022+ test
+# set, macro F1 0.4442 -> 0.5014 and draw F1 0.0227 -> 0.2170 for 1.0pp of
+# accuracy, where the unguarded rule gave up 4.2pp for macro F1 0.5072.
+#
+# Tuned on 2019-2021 as a validation set, never on the test period. This changes
+# only the label; the probabilities themselves are untouched.
+DRAW_VERDICT_THRESHOLD = 0.28
+DRAW_VERDICT_MARGIN = 0.12
+
 MODEL_SEARCH_DIRS = (
     os.path.join(PROJECT_ROOT, 'src', 'app', 'models'),
     os.path.join(PROJECT_ROOT, 'models'),
@@ -170,10 +189,23 @@ class MatchPredictor:
         sorted_probs = sorted([p_home, p_draw, p_away], reverse=True)
         confidence = float(sorted_probs[0] - sorted_probs[1])
         
-        # Determine prediction label from the named probabilities. Listed
-        # away-draw-home so that ties resolve to the lowest class index, matching
-        # the argmax this replaced.
-        outcome_label = max(
+        # Determine the verdict. See the notes on DRAW_VERDICT_THRESHOLD for why
+        # this is not a plain argmax.
+        leader_prob = max(p_home, p_away)
+        is_draw = (
+            p_draw > DRAW_VERDICT_THRESHOLD
+            and (leader_prob - p_draw) <= DRAW_VERDICT_MARGIN
+        )
+        if is_draw:
+            outcome_label = 'Draw'
+        elif p_home > p_away:
+            outcome_label = 'Home Win'
+        else:
+            outcome_label = 'Away Win'
+
+        # The most likely single outcome, which can differ from the verdict above.
+        # Listed away-draw-home so ties resolve to the lowest class index.
+        most_likely = max(
             (('Away Win', p_away), ('Draw', p_draw), ('Home Win', p_home)),
             key=lambda item: item[1]
         )[0]
@@ -185,7 +217,8 @@ class MatchPredictor:
             'expected_home_goals': exg_home,
             'expected_away_goals': exg_away,
             'confidence': confidence,
-            'outcome': outcome_label
+            'outcome': outcome_label,
+            'most_likely_outcome': most_likely
         }
 
     def predict_match(
