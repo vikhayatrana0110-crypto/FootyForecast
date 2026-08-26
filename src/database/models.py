@@ -1,6 +1,5 @@
-import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, Date, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Boolean, Date, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -130,13 +129,6 @@ class PredictionExplanation(Base):
     shap_value_away = Column(Float)
 
     prediction = relationship("Prediction", back_populates="explanations")
-
-def engine_factory(db_path='data/world_cup_predictor.db'):
-    # Ensure directory exists
-    db_dir = os.path.dirname(os.path.abspath(db_path))
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-    return create_engine(f'sqlite:///{db_path}')
 
 def create_all_tables(engine):
     Base.metadata.create_all(engine)

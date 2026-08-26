@@ -25,7 +25,7 @@ def download_results_csv(output_path: str = 'data/raw/results.csv') -> str:
     return output_path
 
 def load_results_to_db(db_manager: DatabaseManager, csv_path: str = 'data/raw/results.csv', min_date: str = '2000-01-01'):
-    """Load results from CSV into SQLite raw_matches database, filtering by date."""
+    """Load results from CSV into the raw_matches table, filtering by date."""
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Match CSV file not found at {csv_path}")
         
@@ -47,7 +47,8 @@ def load_results_to_db(db_manager: DatabaseManager, csv_path: str = 'data/raw/re
     total_matches = len(df)
     print(f"Found {total_matches} matches. Injecting into database...")
     
-    # Insert matches in chunks to prevent SQLite variable limit errors
+    # Insert in chunks: a single bulk insert of ~25k rows would exceed the
+    # backend's bound-parameter limit.
     chunk_size = 500
     for i in range(0, total_matches, chunk_size):
         chunk = df.iloc[i : i + chunk_size]
@@ -55,9 +56,9 @@ def load_results_to_db(db_manager: DatabaseManager, csv_path: str = 'data/raw/re
         
     print(f"Successfully loaded {total_matches} matches into raw_matches table.")
 
-def run_ingestion(db_path: str = 'data/world_cup_predictor.db', min_date: str = '2000-01-01') -> DatabaseManager:
+def run_ingestion(min_date: str = '2000-01-01') -> DatabaseManager:
     """Orchestrate the download and database insertion pipeline."""
-    db_manager = DatabaseManager(db_path)
+    db_manager = DatabaseManager()
     db_manager.init_db()
     
     csv_path = download_results_csv()

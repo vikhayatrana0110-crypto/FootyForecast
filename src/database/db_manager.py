@@ -16,16 +16,13 @@ from src.database.models import (
 )
 
 class DatabaseManager:
-    def __init__(self, db_path: str = None):
+    def __init__(self):
         """
         Connect to the Supabase PostgreSQL database.
 
         Connection details come from the environment (loaded from .env locally,
         or injected from st.secrets by the Streamlit app). Nothing is hardcoded:
         the repository is public, so the host must not be committed.
-
-        Note: `db_path` is accepted for backwards compatibility with callers that
-        still pass a SQLite path. It is ignored - this manager is PostgreSQL-only.
         """
         # Host and password identify and unlock the database, so they have no
         # defaults - a missing value must fail loudly rather than silently
