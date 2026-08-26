@@ -61,7 +61,5 @@ temp/
 .ipynb_checkpoints/
 *.ipynb
 
-# Local dev files
-**/.agents/
-**/.claude/
-CLAUDE.md
+# Local notes and editor scratch files
+NOTES.md
