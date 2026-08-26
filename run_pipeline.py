@@ -8,7 +8,7 @@ from src.ingestion.download_data import run_ingestion
 from src.models.trainer import ModelTrainer
 
 def main():
-    print("World Cup AI Predictor -- Setup & Training Pipeline")
+    print("FootyForecast -- Setup & Training Pipeline")
     
     # 1. Ingest historical matches (post-2000)
     print("\n[Step 1/4] Ingesting historical match data...")

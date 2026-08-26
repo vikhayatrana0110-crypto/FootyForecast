@@ -1,4 +1,4 @@
-# World Cup AI Predictor
+# FootyForecast
 
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![XGBoost](https://img.shields.io/badge/ML-XGBoost-orange.svg)](https://xgboost.readthedocs.io/)
@@ -32,7 +32,7 @@ A machine learning analytics platform that predicts international association fo
 ## Repository Structure
 
 ```
-world-cup-ai-predictor/
+footyforecast/
 ├── .streamlit/
 │   └── config.toml            # Dark theme configuration
 ├── .env.example               # Template for database credentials

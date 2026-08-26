@@ -1,4 +1,4 @@
--- World Cup AI Predictor - Database Schema
+-- FootyForecast - Database Schema
 -- Three-layer architecture: Raw -> Feature -> ML
 -- RAW LAYER - Original data from external sources
 
