@@ -223,6 +223,20 @@ if st.button("Predict Match Outcome"):
         explanation    = explainer.explain_prediction(feats_df, feat_cols, class_idx)
         shap_plot_data = explainer.get_shap_plot_data(feats_df, feat_cols, class_idx)
 
+        # Persist the SHAP contributions alongside the prediction. predict_match()
+        # returns prediction_id only when it saved the prediction, and
+        # explanation_records() returns [] when the values would be heuristic
+        # rather than real SHAP - in either case there is nothing worth storing.
+        prediction_id = pred.get("prediction_id")
+        if prediction_id:
+            records = explainer.explanation_records(feats_df, feat_cols)
+            if records:
+                try:
+                    db.save_prediction_explanations(prediction_id, records)
+                except Exception as e:
+                    # A logging failure must not take the prediction down with it.
+                    st.warning(f"Could not save explanation details: {e}")
+
         st.session_state.update({
             "pred":       pred,
             "explanation": explanation,
@@ -288,11 +302,28 @@ for col, label, val, color in [
                           title_text=f"xG: {label}", margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
+# Verdict. Stated with its probability rather than bare: a 37/29/34 split is a
+# near coin-flip, and showing "Away Win" alone reads as far more certain than the
+# model actually is.
+verdict      = pred.get("outcome", "")
+most_likely  = pred.get("most_likely_outcome", verdict)
+verdict_prob = {"Home Win": p_home, "Draw": p_draw, "Away Win": p_away}.get(verdict, 0.0)
+
+st.markdown(f"### Prediction: **{verdict}** ({verdict_prob:.1%})")
+if most_likely != verdict:
+    # The verdict came from the draw threshold rather than the top probability.
+    st.caption(
+        f"Called a draw because the draw probability ({p_draw:.1%}) is high for this "
+        f"fixture, though {most_likely.lower()} is the single most likely result."
+    )
+
 conf = pred["confidence"]
 conf_level = ("High Confidence" if conf > 0.35 else
               "Medium Confidence" if conf > 0.15 else
               "Low Confidence / Highly Competitive")
-st.markdown(f"### Confidence: **{conf_level}** ({conf:.1%})")
+st.markdown(f"**Separation between the top two outcomes: {conf:.1%}** - {conf_level}")
+if conf < 0.05:
+    st.caption("The top two outcomes are within 5 percentage points: treat this as closely matched rather than a firm call.")
 st.progress(min(1.0, conf / 0.6))
 
 # SHAP chart
