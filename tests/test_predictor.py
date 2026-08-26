@@ -28,6 +28,21 @@ class TestPredictorAndExplainer(unittest.TestCase):
         self.predictor.feature_engine = MagicMock()
         self.predictor.feature_engine.get_feature_columns = MagicMock(return_value=['f1', 'f2'])
 
+    def _predictor_with(self, classes, probs):
+        """Build a MatchPredictor around a mock classifier with a given class set."""
+        predictor = MatchPredictor.__new__(MatchPredictor)
+        predictor.db_manager = None
+        predictor.home_goals_model = self.mock_home_goals
+        predictor.away_goals_model = self.mock_away_goals
+        predictor.feature_engine = MagicMock()
+        predictor.feature_engine.get_feature_columns = MagicMock(return_value=['f1', 'f2'])
+
+        clf = MagicMock()
+        clf.classes_ = classes
+        clf.predict_proba = MagicMock(return_value=probs)
+        predictor.classifier = clf
+        return predictor
+
     def test_prediction_output(self):
         feature_vector = {'f1': 1.0, 'f2': 0.5}
         pred = self.predictor.predict(feature_vector)
@@ -111,6 +126,36 @@ class TestPredictorAndExplainer(unittest.TestCase):
         """Heuristic constants must never be persisted as if they were SHAP values."""
         explainer = MatchExplainer(self.mock_classifier)
         self.assertEqual(explainer.explanation_records(pd.DataFrame(), []), [])
+
+    def test_probabilities_mapped_by_class_not_position(self):
+        """A model missing an outcome class must not mislabel the remaining ones.
+
+        predict() previously read probs[0], probs[1], probs[2] as away/draw/home.
+        A classifier trained on data containing no Draws exposes classes_ == [0, 2]
+        and returns two columns, so column 1 (Home Win) was reported as the Draw
+        probability and probs[2] raised IndexError.
+        """
+        predictor = self._predictor_with(
+            classes=np.array([0, 2]),                        # no Draw class
+            probs=np.array([[0.30, 0.70]]))
+        result = predictor.predict({'f1': 1.0, 'f2': 2.0})
+
+        self.assertAlmostEqual(result['away_win_prob'], 0.30)
+        self.assertAlmostEqual(result['home_win_prob'], 0.70)
+        self.assertAlmostEqual(result['draw_prob'], 0.0,
+                               msg="absent class must be 0.0, not another class's probability")
+        self.assertEqual(result['outcome'], 'Home Win')
+
+    def test_full_class_set_still_maps_correctly(self):
+        """The ordinary three-class case must be unchanged by the classes_ mapping."""
+        predictor = self._predictor_with(
+            classes=np.array([0, 1, 2]),
+            probs=np.array([[0.20, 0.30, 0.50]]))
+        result = predictor.predict({'f1': 1.0, 'f2': 2.0})
+        self.assertAlmostEqual(result['away_win_prob'], 0.20)
+        self.assertAlmostEqual(result['draw_prob'], 0.30)
+        self.assertAlmostEqual(result['home_win_prob'], 0.50)
+        self.assertEqual(result['outcome'], 'Home Win')
 
 if __name__ == '__main__':
     unittest.main()
