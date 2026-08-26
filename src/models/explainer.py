@@ -68,8 +68,12 @@ class MatchExplainer:
             
             # Sort positive features descending (most positive first)
             positives.sort(key=lambda x: x['shap_value'], reverse=True)
-            # Sort negative features ascending (most negative first)
-            negatives.sort(key=lambda x: x['shap_value'], ascending=True)
+            # Sort negative features ascending (most negative first).
+            # NOTE: list.sort() takes `reverse`, not pandas' `ascending`. Passing
+            # `ascending` raised TypeError on every call, which the except block
+            # below swallowed - so this method always fell back to the heuristic
+            # and real SHAP values were never surfaced.
+            negatives.sort(key=lambda x: x['shap_value'])
             
             # Generate natural language summary
             summary = self._generate_summary_text(positives, negatives, class_labels[predicted_class])
@@ -84,6 +88,51 @@ class MatchExplainer:
         except Exception as e:
             print(f"Error running SHAP explanation: {e}")
             return self._heuristic_explanation(X, predicted_class)
+
+    def explanation_records(self, features_df: pd.DataFrame, feature_names: List[str]) -> List[Dict[str, Any]]:
+        """
+        Return one record per feature carrying its SHAP value for all three classes,
+        shaped for DatabaseManager.save_prediction_explanations().
+
+        Returns an empty list when SHAP is unavailable or errors: the heuristic
+        fallback produces invented constants, which are fine for on-screen wording
+        but must never be persisted as if they were real SHAP values.
+        """
+        if not SHAP_AVAILABLE or self.explainer is None:
+            return []
+
+        X = features_df[feature_names]
+        try:
+            shap_values = self.explainer.shap_values(X)
+
+            # Normalise the two shapes SHAP returns for multi-class trees into
+            # per_class[class_index] -> one value per feature.
+            if isinstance(shap_values, list):
+                per_class = [np.asarray(sv)[0] for sv in shap_values]
+            elif getattr(shap_values, 'ndim', 0) == 3:
+                per_class = [shap_values[0, :, i] for i in range(shap_values.shape[2])]
+            else:
+                return []
+
+            if len(per_class) < 3:
+                return []
+
+            # Class order matches the model: 0=Away Win, 1=Draw, 2=Home Win
+            away, draw, home = per_class[0], per_class[1], per_class[2]
+
+            return [
+                {
+                    'feature_name': name,
+                    'feature_value': float(value),
+                    'shap_value_home': float(home[i]),
+                    'shap_value_draw': float(draw[i]),
+                    'shap_value_away': float(away[i]),
+                }
+                for i, (name, value) in enumerate(zip(feature_names, X.iloc[0].values))
+            ]
+        except Exception as e:
+            print(f"Error building SHAP explanation records: {e}")
+            return []
 
     def get_shap_plot_data(self, features_df: pd.DataFrame, feature_names: List[str], class_index: int) -> Dict[str, Any]:
         """Get pre-sorted data for Plotly bar chart rendering."""

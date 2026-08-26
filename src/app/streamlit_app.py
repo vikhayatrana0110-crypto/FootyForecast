@@ -223,6 +223,20 @@ if st.button("Predict Match Outcome"):
         explanation    = explainer.explain_prediction(feats_df, feat_cols, class_idx)
         shap_plot_data = explainer.get_shap_plot_data(feats_df, feat_cols, class_idx)
 
+        # Persist the SHAP contributions alongside the prediction. predict_match()
+        # returns prediction_id only when it saved the prediction, and
+        # explanation_records() returns [] when the values would be heuristic
+        # rather than real SHAP - in either case there is nothing worth storing.
+        prediction_id = pred.get("prediction_id")
+        if prediction_id:
+            records = explainer.explanation_records(feats_df, feat_cols)
+            if records:
+                try:
+                    db.save_prediction_explanations(prediction_id, records)
+                except Exception as e:
+                    # A logging failure must not take the prediction down with it.
+                    st.warning(f"Could not save explanation details: {e}")
+
         st.session_state.update({
             "pred":       pred,
             "explanation": explanation,

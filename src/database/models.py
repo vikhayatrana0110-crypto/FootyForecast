@@ -87,9 +87,15 @@ class ModelVersion(Base):
     model_name = Column(String, nullable=False)
     version = Column(String, nullable=False)
     training_date = Column(Date, nullable=False)
+    # Classifier metrics; left NULL for regressors.
     accuracy = Column(Float)
     log_loss = Column(Float)
     f1_score = Column(Float)
+    # Regressor metrics; left NULL for the classifier. Before these existed,
+    # MAE and RMSE were written into accuracy and log_loss, which made a
+    # regressor look like it had an accuracy of 1.05.
+    mae = Column(Float)
+    rmse = Column(Float)
     model_path = Column(String)
     is_active = Column(Boolean, default=True)
 
