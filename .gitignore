@@ -39,6 +39,10 @@ models/*.joblib
 # Planning documents (kept locally, not part of the shipped repo)
 *.docx
 
+# SQLite databases. The project has been PostgreSQL-only since the Supabase
+# migration; a stray .db file is a leftover, not something to version.
+*.db
+
 # Streamlit & secrets
 .streamlit/secrets.toml
 .streamlit/cache/
