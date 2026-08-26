@@ -29,10 +29,15 @@ Thumbs.db
 .coverage
 htmlcov/
 
-# Data & models (regeneratable via pipeline)
+# Local pipeline output (regeneratable via `python run_pipeline.py`).
+# NOTE: the copies under src/app/ are deliberately tracked - the Streamlit
+# Cloud deployment loads them at runtime and cannot run the training pipeline.
 data/raw/results.csv
 data/world_cup_predictor.db
 models/*.joblib
+
+# Planning documents (kept locally, not part of the shipped repo)
+*.docx
 
 # Streamlit & secrets
 .streamlit/secrets.toml
@@ -53,4 +58,6 @@ temp/
 *.ipynb
 
 # Local dev files
+**/.agents/
+**/.claude/
 CLAUDE.md
