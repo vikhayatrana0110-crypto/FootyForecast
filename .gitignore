@@ -1,0 +1,65 @@
+﻿# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache & bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# IDE & editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing & debugging
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local pipeline output (regeneratable via `python run_pipeline.py`).
+# NOTE: the copies under src/app/ are deliberately tracked - the Streamlit
+# Cloud deployment loads them at runtime and cannot run the training pipeline.
+data/raw/results.csv
+data/world_cup_predictor.db
+models/*.joblib
+
+# Planning documents (kept locally, not part of the shipped repo)
+*.docx
+
+# SQLite databases. The project has been PostgreSQL-only since the Supabase
+# migration; a stray .db file is a leftover, not something to version.
+*.db
+
+# Streamlit & secrets
+.streamlit/secrets.toml
+.streamlit/cache/
+
+# Environment variables & secrets (for Supabase & API keys)
+.env
+.env.local
+.env*.local
+
+# Logs & temp files
+*.log
+*.tmp
+temp/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Local notes and editor scratch files
+NOTES.md

@@ -1,0 +1,24 @@
+# Normalize all text files to LF in the repository.
+# Without this, editing on Windows rewrites every line ending to CRLF and Git
+# reports whole files as modified, which buries real changes in the diff.
+* text=auto eol=lf
+
+# Explicit text types
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.sql   text eol=lf
+*.toml  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text eol=lf
+
+# Binary artifacts: never diff, never convert line endings
+*.joblib binary
+*.db     binary
+*.docx   binary
+*.png    binary
+*.jpg    binary
+
+# Large data file: tracked, but not worth showing in diffs
+*.csv   text eol=lf -diff
