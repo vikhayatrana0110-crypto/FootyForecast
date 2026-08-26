@@ -10,10 +10,21 @@ from sklearn.metrics import accuracy_score, log_loss, f1_score, mean_absolute_er
 from src.database.db_manager import DatabaseManager
 from src.features.match_features import MatchFeatureEngine
 
+# Anchored to this file, not the working directory, so a pipeline run saves to the
+# same place regardless of where it was launched from.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Trained artifacts are written where the deployed app reads them. This directory
+# is tracked in git precisely because the Streamlit deployment cannot retrain:
+# writing anywhere else lets the repository and the database drift apart, which is
+# how the committed models previously went stale without anyone noticing.
+DEFAULT_MODEL_DIR = os.path.join(PROJECT_ROOT, 'src', 'app', 'models')
+
+
 class ModelTrainer:
-    def __init__(self, model_dir: str = 'models'):
-        self.model_dir = model_dir
-        os.makedirs(model_dir, exist_ok=True)
+    def __init__(self, model_dir: str = None):
+        self.model_dir = model_dir or DEFAULT_MODEL_DIR
+        os.makedirs(self.model_dir, exist_ok=True)
         self.feature_engine = MatchFeatureEngine()
 
     def prepare_data(self, match_features_df: pd.DataFrame, cutoff_date: str = '2022-01-01') -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
@@ -118,12 +129,25 @@ class ModelTrainer:
         }
 
     def save_model(self, model: Any, name: str, version: str) -> str:
-        """Save a model artifact using joblib."""
+        """
+        Save a model artifact using joblib.
+
+        Returns a path relative to the project root when possible. An absolute
+        path from the training machine would not resolve anywhere else, and a
+        path relative to the current working directory would only resolve if the
+        app happened to be launched from the same place - both of which have
+        silently broken model loading before.
+        """
         filename = f"{name}_v{version}.joblib"
         path = os.path.join(self.model_dir, filename)
         joblib.dump(model, path)
         print(f"Saved model to {path}")
-        return path
+
+        try:
+            return os.path.relpath(path, PROJECT_ROOT).replace(os.sep, '/')
+        except ValueError:
+            # Different drive on Windows; nothing portable to return.
+            return path
 
     def run_training_pipeline(self, match_features_df: pd.DataFrame, db_manager: Optional[DatabaseManager] = None, cutoff_date: str = '2022-01-01', version: str = '1.0') -> Dict[str, Any]:
         """Run the full training pipeline, evaluate models, save artifacts, and log metrics."""
