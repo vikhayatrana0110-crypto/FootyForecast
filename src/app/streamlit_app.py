@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from typing import Optional
 
 st.set_page_config(
-    page_title="World Cup AI Predictor",
+    page_title="FootyForecast",
     page_icon=":soccer:",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -114,7 +114,7 @@ def load_context(db: DatabaseManager):
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
-st.markdown('<div class="gradient-title">World Cup AI Predictor</div>', unsafe_allow_html=True)
+st.markdown('<div class="gradient-title">FootyForecast</div>', unsafe_allow_html=True)
 st.markdown(
     "<p style='text-align:center;color:#888;font-size:1.2rem;margin-top:-10px;'>"
     "Predict outcomes &amp; expected goals with XGBoost + SHAP explanations</p>",
