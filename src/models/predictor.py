@@ -114,6 +114,28 @@ class MatchPredictor:
         matches.sort(key=os.path.basename)
         return joblib.load(matches[-1])
 
+    def _probabilities_by_class(self, probs) -> Dict[int, float]:
+        """
+        Map predict_proba output to class labels using the model's classes_.
+
+        Falls back to positional order when classes_ is missing or does not line
+        up with the probability vector - which is also what keeps mock models in
+        the tests working, since a MagicMock returns a stand-in for any attribute
+        rather than raising AttributeError.
+        """
+        classes = getattr(self.classifier, 'classes_', None)
+        labels = []
+        if classes is not None:
+            try:
+                labels = [int(c) for c in np.asarray(classes).ravel().tolist()]
+            except (TypeError, ValueError):
+                labels = []
+
+        if len(labels) != len(probs):
+            labels = list(range(len(probs)))
+
+        return {label: float(p) for label, p in zip(labels, probs)}
+
     def predict(self, feature_vector: Union[Dict[str, Any], pd.DataFrame]) -> Dict[str, Any]:
         """
         Run inference using the feature vector.
@@ -128,12 +150,17 @@ class MatchPredictor:
         cols = self.feature_engine.get_feature_columns()
         X = df[cols]
         
-        # Predict W/D/L probabilities
-        # Outcome encoding: 0=Away win, 1=Draw, 2=Home win
+        # Predict W/D/L probabilities.
+        # Outcome encoding: 0=Away win, 1=Draw, 2=Home win. Columns are matched to
+        # labels via classes_ rather than assumed to be in that order: a model
+        # trained on a slice missing an outcome returns fewer columns, and reading
+        # by position would then report another class's probability as the Draw
+        # and raise IndexError on the third column.
         probs = self.classifier.predict_proba(X)[0]
-        p_away = float(probs[0])
-        p_draw = float(probs[1])
-        p_home = float(probs[2])
+        prob_by_class = self._probabilities_by_class(probs)
+        p_away = prob_by_class.get(0, 0.0)
+        p_draw = prob_by_class.get(1, 0.0)
+        p_home = prob_by_class.get(2, 0.0)
         
         # Predict Expected Goals
         exg_home = max(0.0, float(self.home_goals_model.predict(X)[0]))
@@ -143,14 +170,13 @@ class MatchPredictor:
         sorted_probs = sorted([p_home, p_draw, p_away], reverse=True)
         confidence = float(sorted_probs[0] - sorted_probs[1])
         
-        # Determine prediction label
-        max_idx = int(np.argmax(probs))
-        if max_idx == 2:
-            outcome_label = 'Home Win'
-        elif max_idx == 1:
-            outcome_label = 'Draw'
-        else:
-            outcome_label = 'Away Win'
+        # Determine prediction label from the named probabilities. Listed
+        # away-draw-home so that ties resolve to the lowest class index, matching
+        # the argmax this replaced.
+        outcome_label = max(
+            (('Away Win', p_away), ('Draw', p_draw), ('Home Win', p_home)),
+            key=lambda item: item[1]
+        )[0]
             
         return {
             'home_win_prob': p_home,
