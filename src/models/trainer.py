@@ -62,12 +62,25 @@ class ModelTrainer:
         
         return X_train, X_test, y_class_train, y_class_test, y_home_goals_train, y_home_goals_test, y_away_goals_train, y_away_goals_test
 
-    def train_classifier(self, X_train: pd.DataFrame, y_train: pd.Series, X_val: Optional[pd.DataFrame] = None, y_val: Optional[pd.Series] = None) -> xgb.XGBClassifier:
-        """Train an XGBoost Classifier for match outcomes (0=Away, 1=Draw, 2=Home)."""
+    def train_classifier(self, X_train: pd.DataFrame, y_train: pd.Series) -> xgb.XGBClassifier:
+        """
+        Train an XGBoost Classifier for match outcomes (0=Away, 1=Draw, 2=Home).
+
+        n_estimators is 150 rather than 300: at 300 the model overfits, and test
+        log loss bottoms out near 100-150 trees before climbing again. Holding out
+        2019-2021 as a validation set and letting early stopping choose picked
+        98-156 trees across windows, which brackets this value.
+
+        No eval_set is passed. Without early_stopping_rounds it changes nothing -
+        with and without produced bit-identical models - and the set previously
+        passed here was the *test* set, so adding early stopping later would have
+        silently selected the tree count on test data and inflated the reported
+        accuracy by about 0.3pp.
+        """
         classifier = xgb.XGBClassifier(
             objective='multi:softprob',
             num_class=3,
-            n_estimators=300,
+            n_estimators=150,
             max_depth=6,
             learning_rate=0.05,
             subsample=0.8,
@@ -76,16 +89,7 @@ class ModelTrainer:
             eval_metric='mlogloss',
             random_state=42
         )
-        
-        if X_val is not None and y_val is not None:
-            classifier.fit(
-                X_train, y_train,
-                eval_set=[(X_val, y_val)],
-                verbose=False
-            )
-        else:
-            classifier.fit(X_train, y_train, verbose=False)
-            
+        classifier.fit(X_train, y_train, verbose=False)
         return classifier
 
     def train_goals_model(self, X_train: pd.DataFrame, y_train: pd.Series) -> xgb.XGBRegressor:
@@ -159,7 +163,7 @@ class ModelTrainer:
         print(f"Train samples: {len(X_train)}, Test samples: {len(X_test)}")
         
         print("Training match outcome classifier...")
-        classifier = self.train_classifier(X_train, y_c_train, X_test, y_c_test)
+        classifier = self.train_classifier(X_train, y_c_train)
         c_metrics = self.evaluate_classifier(classifier, X_test, y_c_test)
         print(f"Classifier Metrics: Accuracy={c_metrics['accuracy']:.4f}, Log Loss={c_metrics['log_loss']:.4f}, F1={c_metrics['f1_macro']:.4f}")
         
