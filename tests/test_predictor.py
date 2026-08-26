@@ -157,5 +157,68 @@ class TestPredictorAndExplainer(unittest.TestCase):
         self.assertAlmostEqual(result['home_win_prob'], 0.50)
         self.assertEqual(result['outcome'], 'Home Win')
 
+    def test_draw_called_when_probability_clears_threshold(self):
+        """A draw must be the verdict once its probability clears the threshold.
+
+        Argmax could effectively never return 'Draw': draw probability tops out
+        around 0.42 and is usually second, so the verdict was Home or Away in
+        4611 of 4652 test matches while draws are 24% of results.
+        """
+        # Draw clears the threshold and the match is close: away 0.31, draw 0.31,
+        # home 0.38 - the leader is 0.07 ahead, inside the margin.
+        predictor = self._predictor_with(
+            classes=np.array([0, 1, 2]),
+            probs=np.array([[0.31, 0.31, 0.38]]))
+        result = predictor.predict({'f1': 1.0, 'f2': 2.0})
+
+        self.assertEqual(result['outcome'], 'Draw')
+        self.assertEqual(result['most_likely_outcome'], 'Home Win',
+                         "most_likely_outcome should still report the top probability")
+
+    def test_draw_not_called_below_threshold(self):
+        """Below the threshold the verdict falls back to the stronger of home/away."""
+        from src.models.predictor import DRAW_VERDICT_THRESHOLD
+
+        p = DRAW_VERDICT_THRESHOLD - 0.05
+        predictor = self._predictor_with(
+            classes=np.array([0, 1, 2]),
+            probs=np.array([[0.45, p, 1.0 - 0.45 - p]]))
+        result = predictor.predict({'f1': 1.0, 'f2': 2.0})
+
+        self.assertEqual(result['outcome'], 'Away Win')
+        self.assertEqual(result['most_likely_outcome'], 'Away Win')
+
+    def test_probabilities_unaffected_by_verdict_rule(self):
+        """The threshold changes only the label - probabilities must be untouched."""
+        predictor = self._predictor_with(
+            classes=np.array([0, 1, 2]),
+            probs=np.array([[0.30, 0.35, 0.35]]))
+        result = predictor.predict({'f1': 1.0, 'f2': 2.0})
+        self.assertAlmostEqual(result['away_win_prob'], 0.30)
+        self.assertAlmostEqual(result['draw_prob'], 0.35)
+        self.assertAlmostEqual(result['home_win_prob'], 0.35)
+
+    def test_draw_not_called_when_one_side_is_clearly_favoured(self):
+        """A high draw probability alone must not override a dominant favourite.
+
+        On the threshold alone the rule fired on fixtures where the leading side
+        was 64% likely, which is not a draw by any reading. The margin requires
+        the match to actually be close before the verdict becomes a draw.
+        """
+        from src.models.predictor import DRAW_VERDICT_THRESHOLD, DRAW_VERDICT_MARGIN
+
+        draw = DRAW_VERDICT_THRESHOLD + 0.02
+        home = draw + DRAW_VERDICT_MARGIN + 0.05      # comfortably clear of the draw
+        away = 1.0 - draw - home
+        predictor = self._predictor_with(
+            classes=np.array([0, 1, 2]),
+            probs=np.array([[away, draw, home]]))
+        result = predictor.predict({'f1': 1.0, 'f2': 2.0})
+
+        self.assertEqual(result['outcome'], 'Home Win',
+                         "a clear favourite must not be reported as a draw")
+        self.assertGreater(result['draw_prob'], DRAW_VERDICT_THRESHOLD,
+                           "draw probability is still above the threshold - only the margin blocks it")
+
 if __name__ == '__main__':
     unittest.main()
