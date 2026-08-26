@@ -1,1 +1,1 @@
-# World Cup AI Predictor
+# FootyForecast
