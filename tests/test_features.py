@@ -96,7 +96,7 @@ class TestFeatureEngineering(unittest.TestCase):
         team_features = t_engine.compute_team_features(self.matches, self.elo_history)
         
         m_engine = MatchFeatureEngine()
-        match_features = m_engine.compute_match_features(self.matches, team_features, self.elo_history)
+        match_features = m_engine.compute_match_features(self.matches, team_features)
         
         # Check expected columns
         feature_cols = m_engine.get_feature_columns()

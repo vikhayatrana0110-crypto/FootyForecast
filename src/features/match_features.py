@@ -1,22 +1,13 @@
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional
+from src.features.elo_calculator import tournament_tier
+
+TOURNAMENT_IMPORTANCE = {'world_cup': 3.0, 'continental': 2.5, 'qualifier': 1.8, 'friendly': 1.0, 'other': 1.5, 'unknown': 1.0}
 
 def get_tournament_importance(tournament: str) -> float:
     """Get the importance score of a tournament (1.0 to 3.0)."""
-    if not isinstance(tournament, str):
-        return 1.0
-    t_lower = tournament.lower()
-    if 'world cup' in t_lower and 'qualifying' not in t_lower:
-        return 3.0
-    elif 'euro' in t_lower or 'copa' in t_lower or 'nations cup' in t_lower or 'afcon' in t_lower or 'asian cup' in t_lower or 'gold cup' in t_lower:
-        return 2.5
-    elif 'qualify' in t_lower or 'qualification' in t_lower or 'nations league' in t_lower:
-        return 1.8
-    elif 'friendly' in t_lower:
-        return 1.0
-    else:
-        return 1.5
+    return TOURNAMENT_IMPORTANCE[tournament_tier(tournament)]
 
 def compute_h2h(matches_df: pd.DataFrame, team_a: str, team_b: str, before_date: Optional[Any] = None, max_matches: int = 10) -> float:
     """
@@ -40,29 +31,9 @@ def compute_h2h(matches_df: pd.DataFrame, team_a: str, team_b: str, before_date:
     # Take last N meetings
     h2h = h2h.sort_values('date', ascending=False).head(max_matches)
     
-    points = []
-    for _, match in h2h.iterrows():
-        home = match['home_team']
-        home_s = int(match['home_score'])
-        away_s = int(match['away_score'])
-        
-        # Calculate points from team_a perspective
-        if home == team_a:
-            if home_s > away_s:
-                points.append(1.0) # Win
-            elif home_s < away_s:
-                points.append(-1.0) # Loss
-            else:
-                points.append(0.0) # Draw
-        else:
-            if away_s > home_s:
-                points.append(1.0) # Win
-            elif away_s < home_s:
-                points.append(-1.0) # Loss
-            else:
-                points.append(0.0) # Draw
-                
-    return float(np.mean(points))
+    # +1 win / 0 draw / -1 loss, from team_a's perspective
+    pts = np.sign(h2h['home_score'] - h2h['away_score'])
+    return float(np.where(h2h['home_team'] == team_a, pts, -pts).mean())
 
 def compute_h2h_series(matches_df: pd.DataFrame, max_matches: int = 10) -> pd.Series:
     """
@@ -138,9 +109,6 @@ def compute_h2h_series(matches_df: pd.DataFrame, max_matches: int = 10) -> pd.Se
 
 
 class MatchFeatureEngine:
-    def __init__(self, team_feature_engine: Any = None):
-        self.team_feature_engine = team_feature_engine
-
     def get_feature_columns(self) -> List[str]:
         """Return the list of features used in the ML model."""
         return [
@@ -155,7 +123,7 @@ class MatchFeatureEngine:
             'tournament_importance'
         ]
 
-    def compute_match_features(self, matches_df: pd.DataFrame, team_features_df: pd.DataFrame, elo_history_df: pd.DataFrame) -> pd.DataFrame:
+    def compute_match_features(self, matches_df: pd.DataFrame, team_features_df: pd.DataFrame) -> pd.DataFrame:
         """
         Merge team rolling features into match records and construct match-level feature vectors.
         """
@@ -219,44 +187,22 @@ class MatchFeatureEngine:
         away_team: str,
         tournament: str,
         team_features_df: pd.DataFrame,
-        elo_history_df: pd.DataFrame,
         matches_df: pd.DataFrame
     ) -> Dict[str, Any]:
         """
         Generate feature vector for a NEW prediction using the latest available features.
         """
-        # Get latest features for Home Team
-        home_latest = team_features_df[team_features_df['team'] == home_team].sort_values('date', ascending=False).head(1)
-        # Get latest features for Away Team
-        away_latest = team_features_df[team_features_df['team'] == away_team].sort_values('date', ascending=False).head(1)
-        
-        # Defaults if no prior matches
-        home_elo = home_latest['elo_rating'].values[0] if not home_latest.empty else 1500.0
-        away_elo = away_latest['elo_rating'].values[0] if not away_latest.empty else 1500.0
-        
-        home_attack = home_latest['attack_rating'].values[0] if not home_latest.empty else 1.33
-        away_attack = away_latest['attack_rating'].values[0] if not away_latest.empty else 1.33
-        
-        home_defense = home_latest['defense_rating'].values[0] if not home_latest.empty else 0.5
-        away_defense = away_latest['defense_rating'].values[0] if not away_latest.empty else 0.5
-        
-        home_form = home_latest['form_score'].values[0] if not home_latest.empty else 1.0
-        away_form = away_latest['form_score'].values[0] if not away_latest.empty else 1.0
-        
-        home_scored_avg = home_latest['goals_scored_avg'].values[0] if not home_latest.empty else 1.0
-        away_scored_avg = away_latest['goals_scored_avg'].values[0] if not away_latest.empty else 1.0
-        
-        home_conceded_avg = home_latest['goals_conceded_avg'].values[0] if not home_latest.empty else 1.0
-        away_conceded_avg = away_latest['goals_conceded_avg'].values[0] if not away_latest.empty else 1.0
-        
-        # Calculate difference features
-        elo_diff = home_elo - away_elo
-        attack_diff = home_attack - away_attack
-        defense_diff = home_defense - away_defense
-        form_diff = home_form - away_form
-        goals_scored_diff = home_scored_avg - away_scored_avg
-        goals_conceded_diff = home_conceded_avg - away_conceded_avg
-        
+        # Latest features per side; neutral defaults for a team with no prior matches.
+        defaults = {'elo_rating': 1500.0, 'attack_rating': 1.33, 'defense_rating': 0.5,
+                    'form_score': 1.0, 'goals_scored_avg': 1.0, 'goals_conceded_avg': 1.0}
+
+        def latest(team):
+            rows = team_features_df[team_features_df['team'] == team].sort_values('date', ascending=False).head(1)
+            return {k: d if rows.empty else rows[k].values[0] for k, d in defaults.items()}
+
+        home, away = latest(home_team), latest(away_team)
+        diff = {k: home[k] - away[k] for k in defaults}
+
         # H2H advantage
         h2h_adv = compute_h2h(matches_df, home_team, away_team)
         
@@ -266,12 +212,12 @@ class MatchFeatureEngine:
         tourn_imp = get_tournament_importance(tournament)
         
         return {
-            'elo_difference': elo_diff,
-            'attack_difference': attack_diff,
-            'defense_difference': defense_diff,
-            'form_difference': form_diff,
-            'goals_scored_diff': goals_scored_diff,
-            'goals_conceded_diff': goals_conceded_diff,
+            'elo_difference': diff['elo_rating'],
+            'attack_difference': diff['attack_rating'],
+            'defense_difference': diff['defense_rating'],
+            'form_difference': diff['form_score'],
+            'goals_scored_diff': diff['goals_scored_avg'],
+            'goals_conceded_diff': diff['goals_conceded_avg'],
             'h2h_advantage': h2h_adv,
             'is_neutral_venue': is_neutral,
             'tournament_importance': tourn_imp

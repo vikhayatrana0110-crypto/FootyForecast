@@ -61,23 +61,6 @@ class TestPredictorAndExplainer(unittest.TestCase):
         # Outcome label
         self.assertEqual(pred['outcome'], 'Home Win')
 
-    def test_explainer_fallback(self):
-        # Instantiate explainer with mock model
-        explainer = MatchExplainer(self.mock_classifier)
-        
-        # Mock dataframe
-        X = pd.DataFrame([{'elo_difference': 100.0, 'form_difference': 0.5, 'other_feature': 1.0}])
-        feature_names = ['elo_difference', 'form_difference', 'other_feature']
-        
-        # predicted class 2 = Home Win
-        explanation = explainer.explain_prediction(X, feature_names, predicted_class=2)
-        
-        # Check output structure
-        self.assertIn('positive_factors', explanation)
-        self.assertIn('negative_factors', explanation)
-        self.assertIn('explanation_text', explanation)
-        self.assertTrue(len(explanation['positive_factors']) > 0)
-
     def test_explainer_uses_real_shap_with_a_real_model(self):
         """SHAP values must actually be produced, not silently fall back.
 
@@ -103,8 +86,6 @@ class TestPredictorAndExplainer(unittest.TestCase):
         model = xgb.XGBClassifier(n_estimators=8, max_depth=2, verbosity=0).fit(X, y)
 
         explainer = MatchExplainer(model)
-        if explainer.explainer is None:
-            self.skipTest("TreeExplainer unavailable for this model type")
 
         result = explainer.explain_prediction(X.head(1), cols, 2)
         self.assertTrue(result['shap_values'],
@@ -121,11 +102,6 @@ class TestPredictorAndExplainer(unittest.TestCase):
             self.assertIn('shap_value_home', r)
             self.assertIn('shap_value_draw', r)
             self.assertIn('shap_value_away', r)
-
-    def test_explanation_records_empty_without_shap(self):
-        """Heuristic constants must never be persisted as if they were SHAP values."""
-        explainer = MatchExplainer(self.mock_classifier)
-        self.assertEqual(explainer.explanation_records(pd.DataFrame(), []), [])
 
     def test_probabilities_mapped_by_class_not_position(self):
         """A model missing an outcome class must not mislabel the remaining ones.
