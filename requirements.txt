@@ -17,5 +17,4 @@ joblib==1.5.3
 psycopg2-binary
 python-dotenv
 
-# Football data
-statsbombpy==1.21.0
+
