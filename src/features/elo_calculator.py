@@ -43,67 +43,29 @@ class EloCalculator:
         """Calculate new Elo ratings for home and away teams and update self.ratings."""
         r_home = self.get_rating(home_team)
         r_away = self.get_rating(away_team)
-        
-        # Apply home advantage to expectation calculation if not a neutral venue
-        eff_r_home = r_home + (0.0 if neutral else self.home_advantage)
-        eff_r_away = r_away
-        
-        exp_home = self.expected_score(eff_r_home, eff_r_away)
-        exp_away = 1.0 - exp_home
-        
-        # Actual result from home team perspective: 1.0 win, 0.5 draw, 0.0 loss
+        home_edge = 0.0 if neutral else self.home_advantage
+        exp_home = self.expected_score(r_home + home_edge, r_away)
         act_home = 1.0 if home_score > away_score else 0.0 if home_score < away_score else 0.5
-        act_away = 1.0 - act_home
-        
-        # Goal difference multiplier (G)
+
         goal_diff = abs(home_score - away_score)
-        if goal_diff <= 1:
-            g = 1.0
-        elif goal_diff == 2:
-            g = 1.5
-        else:
-            g = (11.0 + goal_diff) / 8.0
-            
-        k = self.get_k_factor(tournament)
-        
-        # Update ratings
-        new_r_home = r_home + k * g * (act_home - exp_home)
-        new_r_away = r_away + k * g * (act_away - exp_away)
-        
-        # Save updated ratings
-        self.ratings[home_team] = round(new_r_home, 1)
-        self.ratings[away_team] = round(new_r_away, 1)
-        
+        g = 1.0 if goal_diff <= 1 else 1.5 if goal_diff == 2 else (11.0 + goal_diff) / 8.0
+        delta = self.get_k_factor(tournament) * g * (act_home - exp_home)
+
+        self.ratings[home_team] = round(r_home + delta, 1)
+        self.ratings[away_team] = round(r_away - delta, 1)
         return self.ratings[home_team], self.ratings[away_team]
 
     def compute_all_ratings(self, matches_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Process matches chronologically to calculate historical Elo rating sequences.
-        Returns a DataFrame with [date, team, elo_rating] suitable for the raw_elo_ratings table.
-        """
-        # Ensure chronological order
+        """Walk matches in date order and record each team's rating after every match."""
         df = matches_df.copy()
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values('date').reset_index(drop=True)
-        
+
         elo_history = []
-        
-        for _, row in df.iterrows():
-            d = row['date']
-            home = row['home_team']
-            away = row['away_team']
-            home_s = int(row['home_score'])
-            away_s = int(row['away_score'])
-            tournament = row['tournament']
-            neutral = bool(row['neutral'])
-            
-            # Update ratings based on the match outcome
-            home_elo_after, away_elo_after = self.update_ratings(
-                home, away, home_s, away_s, tournament, neutral
+        for m in df.itertuples():
+            home_elo, away_elo = self.update_ratings(
+                m.home_team, m.away_team, int(m.home_score), int(m.away_score), m.tournament, bool(m.neutral)
             )
-            
-            # Record Elo rating AFTER the match
-            elo_history.append({'date': d, 'team': home, 'elo_rating': home_elo_after})
-            elo_history.append({'date': d, 'team': away, 'elo_rating': away_elo_after})
-            
+            elo_history.append({'date': m.date, 'team': m.home_team, 'elo_rating': home_elo})
+            elo_history.append({'date': m.date, 'team': m.away_team, 'elo_rating': away_elo})
         return pd.DataFrame(elo_history)

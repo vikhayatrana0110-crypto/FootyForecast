@@ -22,29 +22,20 @@ class TestFeatureEngineering(unittest.TestCase):
     def test_team_features(self):
         engine = TeamFeatureEngine(window=5)
         team_features = engine.compute_team_features(self.matches, self.elo_history)
-        
-        # Test columns
+
         expected_cols = ['team', 'date', 'elo_rating', 'recent_win_rate', 'goals_scored_avg', 'goals_conceded_avg', 'attack_rating', 'defense_rating', 'form_score', 'matches_played']
         for col in expected_cols:
             self.assertIn(col, team_features.columns)
 
     def test_h2h_calculation(self):
-        # 1 match between France and England: France won 2-1
-        # H2H advantage for France vs England should be 1.0 (win)
         val = compute_h2h(self.matches, 'France', 'England')
         self.assertEqual(val, 1.0)
-        
-        # H2H advantage for England vs France should be -1.0 (loss)
+
         val2 = compute_h2h(self.matches, 'England', 'France')
         self.assertEqual(val2, -1.0)
 
     def test_h2h_series_matches_per_row_computation(self):
-        """The vectorised H2H must agree exactly with the per-row version.
-
-        compute_h2h_series() replaced an O(n^2) per-row loop. A divergence here
-        would silently corrupt a training feature rather than raise, so the two
-        implementations are compared directly.
-        """
+        """The one-pass H2H must agree exactly with the per-row version."""
         import numpy as np
 
         rng = np.random.default_rng(7)
@@ -54,9 +45,6 @@ class TestFeatureEngineering(unittest.TestCase):
         for i in range(200):
             h, a = rng.choice(len(teams), size=2, replace=False)
             date = pd.Timestamp('2020-01-01') + pd.Timedelta(days=int(i // 2))
-            # A given pair meets at most once per date, as real fixtures do. Two
-            # meetings on the cutoff date would land on the documented tie-break
-            # where compute_h2h()'s unstable sort makes its own answer arbitrary.
             key = (date, tuple(sorted((teams[h], teams[a]))))
             if key in seen:
                 continue
@@ -88,22 +76,19 @@ class TestFeatureEngineering(unittest.TestCase):
         s = compute_h2h_series(df, max_matches=10)
         self.assertEqual(s.iloc[0], 0.0)
         self.assertEqual(s.iloc[1], 0.0)
-        # Third match sees one win and one loss -> mean of +1 and -1
         self.assertAlmostEqual(s.iloc[2], 0.0, places=12)
 
     def test_match_features(self):
         t_engine = TeamFeatureEngine(window=5)
         team_features = t_engine.compute_team_features(self.matches, self.elo_history)
-        
+
         m_engine = MatchFeatureEngine()
         match_features = m_engine.compute_match_features(self.matches, team_features)
-        
-        # Check expected columns
+
         feature_cols = m_engine.get_feature_columns()
         for col in feature_cols:
             self.assertIn(col, match_features.columns)
-            
-        # Target column result should exist
+
         self.assertIn('result', match_features.columns)
         self.assertIn('home_goals', match_features.columns)
         self.assertIn('away_goals', match_features.columns)
