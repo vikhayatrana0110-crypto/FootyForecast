@@ -1,7 +1,22 @@
-import os
-import math
 import pandas as pd
 from typing import Dict, Tuple
+
+def tournament_tier(tournament: str) -> str:
+    """Classify a tournament name; shared by the Elo K-factor and the importance feature."""
+    if not isinstance(tournament, str):
+        return 'unknown'
+    t = tournament.lower()
+    if 'world cup' in t and 'qualifying' not in t:
+        return 'world_cup'
+    if any(k in t for k in ('euro', 'copa', 'nations cup', 'afcon', 'asian cup', 'gold cup')):
+        return 'continental'
+    if any(k in t for k in ('qualify', 'qualification', 'nations league')):
+        return 'qualifier'
+    if 'friendly' in t:
+        return 'friendly'
+    return 'other'
+
+K_FACTORS = {'world_cup': 60.0, 'continental': 50.0, 'qualifier': 40.0, 'friendly': 20.0, 'other': 30.0, 'unknown': 30.0}
 
 class EloCalculator:
     def __init__(self, k_factor: int = 30, home_advantage: float = 100.0, initial_rating: float = 1500.0):
@@ -22,21 +37,7 @@ class EloCalculator:
 
     def get_k_factor(self, tournament: str) -> float:
         """Return K-factor based on tournament importance."""
-        if not isinstance(tournament, str):
-            return 30.0
-            
-        t_lower = tournament.lower()
-        if 'world cup' in t_lower and 'qualifying' not in t_lower:
-            return 60.0
-        elif 'euro' in t_lower or 'copa' in t_lower or 'nations cup' in t_lower or 'afcon' in t_lower or 'asian cup' in t_lower or 'gold cup' in t_lower:
-            # Major continental tournaments
-            return 50.0
-        elif 'qualify' in t_lower or 'qualification' in t_lower or 'nations league' in t_lower:
-            return 40.0
-        elif 'friendly' in t_lower:
-            return 20.0
-        else:
-            return 30.0
+        return K_FACTORS[tournament_tier(tournament)]
 
     def update_ratings(self, home_team: str, away_team: str, home_score: int, away_score: int, tournament: str, neutral: bool = False) -> Tuple[float, float]:
         """Calculate new Elo ratings for home and away teams and update self.ratings."""
@@ -50,15 +51,8 @@ class EloCalculator:
         exp_home = self.expected_score(eff_r_home, eff_r_away)
         exp_away = 1.0 - exp_home
         
-        # Determine actual result (from home team perspective)
-        # 1.0 = Home Win, 0.5 = Draw, 0.0 = Away Win
-        if home_score > away_score:
-            act_home = 1.0
-        elif home_score < away_score:
-            act_home = 0.0
-        else:
-            act_home = 0.5
-            
+        # Actual result from home team perspective: 1.0 win, 0.5 draw, 0.0 loss
+        act_home = 1.0 if home_score > away_score else 0.0 if home_score < away_score else 0.5
         act_away = 1.0 - act_home
         
         # Goal difference multiplier (G)
@@ -103,10 +97,6 @@ class EloCalculator:
             tournament = row['tournament']
             neutral = bool(row['neutral'])
             
-            # Record Elo rating BEFORE the match for features
-            home_elo_before = self.get_rating(home)
-            away_elo_before = self.get_rating(away)
-            
             # Update ratings based on the match outcome
             home_elo_after, away_elo_after = self.update_ratings(
                 home, away, home_s, away_s, tournament, neutral
@@ -117,11 +107,3 @@ class EloCalculator:
             elo_history.append({'date': d, 'team': away, 'elo_rating': away_elo_after})
             
         return pd.DataFrame(elo_history)
-
-if __name__ == '__main__':
-    # Simple demo/test
-    calc = EloCalculator()
-    print("Expected prob (1500 vs 1500):", calc.expected_score(1500, 1500))
-    print("Expected prob (1600 vs 1500):", calc.expected_score(1600, 1500))
-    print("K-factor for WC:", calc.get_k_factor("FIFA World Cup"))
-    print("Update ratings (Brazil 2 - 0 Argentina, Friendly):", calc.update_ratings("Brazil", "Argentina", 2, 0, "Friendly"))

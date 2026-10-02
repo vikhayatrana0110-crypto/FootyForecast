@@ -2,8 +2,7 @@ import os
 import joblib
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, Tuple, Optional
 import xgboost as xgb
 from sklearn.metrics import accuracy_score, log_loss, f1_score, mean_absolute_error, mean_squared_error
 
@@ -27,40 +26,13 @@ class ModelTrainer:
         os.makedirs(self.model_dir, exist_ok=True)
         self.feature_engine = MatchFeatureEngine()
 
-    def prepare_data(self, match_features_df: pd.DataFrame, cutoff_date: str = '2022-01-01') -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
-        """
-        Prepare train and test splits using a time-based cutoff.
-        Returns:
-            X_train, X_test, y_class_train, y_class_test, y_home_goals_train, y_home_goals_test, y_away_goals_train, y_away_goals_test
-        """
+    def prepare_data(self, match_features_df: pd.DataFrame, cutoff_date: str = '2022-01-01') -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """Drop incomplete rows and split into (train, test) at a time-based cutoff."""
         df = match_features_df.copy()
         df['date'] = pd.to_datetime(df['date'])
-        
-        # Drop rows with missing feature values
-        feature_cols = self.feature_engine.get_feature_columns()
-        df = df.dropna(subset=feature_cols + ['result', 'home_goals', 'away_goals'])
-        
-        # Split train/test
-        cutoff = pd.to_datetime(cutoff_date)
-        train_mask = df['date'] < cutoff
-        test_mask = df['date'] >= cutoff
-        
-        train_df = df[train_mask]
-        test_df = df[test_mask]
-        
-        X_train = train_df[feature_cols]
-        X_test = test_df[feature_cols]
-        
-        y_class_train = train_df['result']
-        y_class_test = test_df['result']
-        
-        y_home_goals_train = train_df['home_goals']
-        y_home_goals_test = test_df['home_goals']
-        
-        y_away_goals_train = train_df['away_goals']
-        y_away_goals_test = test_df['away_goals']
-        
-        return X_train, X_test, y_class_train, y_class_test, y_home_goals_train, y_home_goals_test, y_away_goals_train, y_away_goals_test
+        df = df.dropna(subset=self.feature_engine.get_feature_columns() + ['result', 'home_goals', 'away_goals'])
+        is_train = df['date'] < pd.to_datetime(cutoff_date)
+        return df[is_train], df[~is_train]
 
     def train_classifier(self, X_train: pd.DataFrame, y_train: pd.Series) -> xgb.XGBClassifier:
         """
@@ -156,25 +128,25 @@ class ModelTrainer:
     def run_training_pipeline(self, match_features_df: pd.DataFrame, db_manager: Optional[DatabaseManager] = None, cutoff_date: str = '2022-01-01', version: str = '1.0') -> Dict[str, Any]:
         """Run the full training pipeline, evaluate models, save artifacts, and log metrics."""
         print("Preparing dataset splits...")
-        X_train, X_test, y_c_train, y_c_test, y_hg_train, y_hg_test, y_ag_train, y_ag_test = self.prepare_data(
-            match_features_df, cutoff_date=cutoff_date
-        )
+        train, test = self.prepare_data(match_features_df, cutoff_date=cutoff_date)
+        cols = self.feature_engine.get_feature_columns()
+        X_train, X_test = train[cols], test[cols]
         
         print(f"Train samples: {len(X_train)}, Test samples: {len(X_test)}")
         
         print("Training match outcome classifier...")
-        classifier = self.train_classifier(X_train, y_c_train)
-        c_metrics = self.evaluate_classifier(classifier, X_test, y_c_test)
+        classifier = self.train_classifier(X_train, train['result'])
+        c_metrics = self.evaluate_classifier(classifier, X_test, test['result'])
         print(f"Classifier Metrics: Accuracy={c_metrics['accuracy']:.4f}, Log Loss={c_metrics['log_loss']:.4f}, F1={c_metrics['f1_macro']:.4f}")
         
         print("Training Home expected goals regressor...")
-        home_goals_model = self.train_goals_model(X_train, y_hg_train)
-        hg_metrics = self.evaluate_regressor(home_goals_model, X_test, y_hg_test)
+        home_goals_model = self.train_goals_model(X_train, train['home_goals'])
+        hg_metrics = self.evaluate_regressor(home_goals_model, X_test, test['home_goals'])
         print(f"Home Goals Regressor Metrics: MAE={hg_metrics['mae']:.4f}, RMSE={hg_metrics['rmse']:.4f}")
         
         print("Training Away expected goals regressor...")
-        away_goals_model = self.train_goals_model(X_train, y_ag_train)
-        ag_metrics = self.evaluate_regressor(away_goals_model, X_test, y_ag_test)
+        away_goals_model = self.train_goals_model(X_train, train['away_goals'])
+        ag_metrics = self.evaluate_regressor(away_goals_model, X_test, test['away_goals'])
         print(f"Away Goals Regressor Metrics: MAE={ag_metrics['mae']:.4f}, RMSE={ag_metrics['rmse']:.4f}")
         
         # Save artifacts
@@ -185,33 +157,9 @@ class ModelTrainer:
         # Log to DB if provided
         if db_manager:
             print("Logging models to database...")
-            with db_manager:
-                # Log outcome classifier as main model
-                db_manager.save_model_version(
-                    name='outcome_classifier',
-                    version=version,
-                    metrics={
-                        'accuracy': c_metrics['accuracy'],
-                        'log_loss': c_metrics['log_loss'],
-                        'f1_macro': c_metrics['f1_macro']
-                    },
-                    model_path=c_path
-                )
-                
-                # Log expected goals regressors
-                db_manager.save_model_version(
-                    name='home_goals_regressor',
-                    version=version,
-                    metrics=hg_metrics,
-                    model_path=hg_path
-                )
-                
-                db_manager.save_model_version(
-                    name='away_goals_regressor',
-                    version=version,
-                    metrics=ag_metrics,
-                    model_path=ag_path
-                )
+            db_manager.save_model_version('outcome_classifier', version, c_metrics, c_path)
+            db_manager.save_model_version('home_goals_regressor', version, hg_metrics, hg_path)
+            db_manager.save_model_version('away_goals_regressor', version, ag_metrics, ag_path)
                 
         return {
             'classifier': classifier,

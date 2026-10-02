@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, Boolean, Date, DateTime, ForeignKey
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
@@ -17,9 +17,6 @@ class RawMatch(Base):
     city = Column(String)
     country = Column(String)
     neutral = Column(Boolean, default=False)
-
-    statistics = relationship("RawTeamStatistic", back_populates="match")
-    match_features = relationship("MatchFeature", back_populates="match")
 
 class RawEloRating(Base):
     __tablename__ = 'raw_elo_ratings'
@@ -38,8 +35,6 @@ class RawTeamStatistic(Base):
     shots = Column(Integer)
     possession = Column(Float)
     xg = Column(Float)
-
-    match = relationship("RawMatch", back_populates="statistics")
 
 class TeamFeature(Base):
     __tablename__ = 'team_features'
@@ -77,8 +72,6 @@ class MatchFeature(Base):
     home_goals = Column(Integer)
     away_goals = Column(Integer)
 
-    match = relationship("RawMatch", back_populates="match_features")
-
 class ModelVersion(Base):
     __tablename__ = 'model_versions'
 
@@ -98,8 +91,6 @@ class ModelVersion(Base):
     model_path = Column(String)
     is_active = Column(Boolean, default=True)
 
-    predictions = relationship("Prediction", back_populates="model_version")
-
 class Prediction(Base):
     __tablename__ = 'predictions'
 
@@ -114,9 +105,6 @@ class Prediction(Base):
     expected_home_goals = Column(Float)
     expected_away_goals = Column(Float)
 
-    model_version = relationship("ModelVersion", back_populates="predictions")
-    explanations = relationship("PredictionExplanation", back_populates="prediction")
-
 class PredictionExplanation(Base):
     __tablename__ = 'prediction_explanations'
 
@@ -127,8 +115,6 @@ class PredictionExplanation(Base):
     shap_value_home = Column(Float)
     shap_value_draw = Column(Float)
     shap_value_away = Column(Float)
-
-    prediction = relationship("Prediction", back_populates="explanations")
 
 def create_all_tables(engine):
     Base.metadata.create_all(engine)
