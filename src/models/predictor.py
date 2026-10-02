@@ -1,8 +1,9 @@
 import os
+import glob
 import joblib
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, Optional, Union
 from src.database.db_manager import DatabaseManager
 from src.features.match_features import MatchFeatureEngine
 
@@ -11,10 +12,6 @@ from src.features.match_features import MatchFeatureEngine
 # from src/app/, or by Streamlit Cloud.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Directories searched for .joblib artifacts, in priority order.
-# src/app/models is the tracked copy that the training pipeline writes to and the
-# deployed app reads from, so it is checked first. models/ is only a fallback for
-# older local checkouts that still have artifacts from a previous layout.
 # A draw is a common outcome (~24% of matches) but rarely the single most likely
 # one: draw probability tops out near 0.42 and usually sits second behind a home
 # or away win. Choosing the verdict by argmax therefore almost never returns
@@ -34,54 +31,23 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 DRAW_VERDICT_THRESHOLD = 0.28
 DRAW_VERDICT_MARGIN = 0.12
 
-MODEL_SEARCH_DIRS = (
-    os.path.join(PROJECT_ROOT, 'src', 'app', 'models'),
-    os.path.join(PROJECT_ROOT, 'models'),
-)
+# Where the training pipeline writes artifacts and the deployed app reads them.
+MODEL_DIR = os.path.join(PROJECT_ROOT, 'src', 'app', 'models')
 
 
 class MatchPredictor:
-    def __init__(
-        self,
-        classifier_path: Optional[str] = None,
-        home_goals_path: Optional[str] = None,
-        away_goals_path: Optional[str] = None,
-        db_manager: Optional[DatabaseManager] = None
-    ):
+    def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db_manager = db_manager
         self.feature_engine = MatchFeatureEngine()
-        
-        # Load classifier
-        if classifier_path:
-            self.classifier = joblib.load(classifier_path)
-        elif db_manager:
-            self.classifier = self._load_active_model_from_db('outcome_classifier')
-        else:
-            self.classifier = self._load_latest_local_model('outcome_classifier')
-            
-        # Load home goals regressor
-        if home_goals_path:
-            self.home_goals_model = joblib.load(home_goals_path)
-        elif db_manager:
-            self.home_goals_model = self._load_active_model_from_db('home_goals_regressor')
-        else:
-            self.home_goals_model = self._load_latest_local_model('home_goals_regressor')
-            
-        # Load away goals regressor
-        if away_goals_path:
-            self.away_goals_model = joblib.load(away_goals_path)
-        elif db_manager:
-            self.away_goals_model = self._load_active_model_from_db('away_goals_regressor')
-        else:
-            self.away_goals_model = self._load_latest_local_model('away_goals_regressor')
+        load = self._load_active_model_from_db if db_manager else self._load_latest_local_model
+        self.classifier = load('outcome_classifier')
+        self.home_goals_model = load('home_goals_regressor')
+        self.away_goals_model = load('away_goals_regressor')
 
     def _load_active_model_from_db(self, model_name: str) -> Any:
         """Query database for the active version of a specific model name."""
-        if not self.db_manager:
-            raise ValueError("db_manager must be set to load models from database.")
-        with self.db_manager:
-            session = self.db_manager.get_session()
-            from src.database.models import ModelVersion
+        from src.database.models import ModelVersion
+        with self.db_manager.get_session() as session:
             model_record = session.query(ModelVersion).filter(
                 ModelVersion.model_name == model_name,
                 ModelVersion.is_active == True
@@ -93,45 +59,22 @@ class MatchPredictor:
         # model_path is recorded at training time and may be relative to whatever
         # directory the pipeline ran in (or an absolute path from another machine),
         # so it is not guaranteed to resolve here. Try it, then fall back to
-        # scanning the known model directories.
+        # scanning MODEL_DIR.
         for candidate in (stored_path, os.path.join(PROJECT_ROOT, stored_path)):
             if candidate and os.path.isfile(candidate):
                 return joblib.load(candidate)
 
         return self._load_latest_local_model(model_name)
 
-    def _find_model_dirs(self) -> List[str]:
-        """Return the model search directories that actually exist."""
-        return [d for d in MODEL_SEARCH_DIRS if os.path.isdir(d)]
-
     def _load_latest_local_model(self, model_name: str) -> Any:
-        """Load the highest-versioned .joblib for model_name from the search directories."""
-        searched = self._find_model_dirs()
-        if not searched:
+        """Load the highest-versioned .joblib for model_name from MODEL_DIR."""
+        files = sorted(glob.glob(os.path.join(MODEL_DIR, f'{model_name}*.joblib')))
+        if not files:
             raise FileNotFoundError(
-                "No model directory found. Looked in: "
-                + ", ".join(MODEL_SEARCH_DIRS)
-                + ". Run `python run_pipeline.py` to train and save models."
+                f"No model file starting with '{model_name}' found in {MODEL_DIR}. "
+                "Run `python run_pipeline.py` to train and save models."
             )
-
-        matches = []
-        for model_dir in searched:
-            matches += [
-                os.path.join(model_dir, f)
-                for f in os.listdir(model_dir)
-                if f.startswith(model_name) and f.endswith('.joblib')
-            ]
-
-        if not matches:
-            raise FileNotFoundError(
-                f"No model file starting with '{model_name}' found in: "
-                + ", ".join(searched)
-                + ". Run `python run_pipeline.py` to train and save models."
-            )
-
-        # Sort by filename so the highest version suffix wins.
-        matches.sort(key=os.path.basename)
-        return joblib.load(matches[-1])
+        return joblib.load(files[-1])
 
     def _probabilities_by_class(self, probs) -> Dict[int, float]:
         """
@@ -227,7 +170,6 @@ class MatchPredictor:
         away_team: str,
         tournament: str,
         team_features_df: pd.DataFrame,
-        elo_history_df: pd.DataFrame,
         matches_df: pd.DataFrame,
         save_to_db: bool = True
     ) -> Dict[str, Any]:
@@ -236,7 +178,7 @@ class MatchPredictor:
         """
         # 1. Generate feature vector
         feats = self.feature_engine.create_prediction_features(
-            home_team, away_team, tournament, team_features_df, elo_history_df, matches_df
+            home_team, away_team, tournament, team_features_df, matches_df
         )
         
         # 2. Run prediction
@@ -246,14 +188,8 @@ class MatchPredictor:
         
         # 3. Optionally save to DB
         if save_to_db and self.db_manager:
-            # Get active model_id if available
-            model_id = None
-            with self.db_manager:
-                active_model = self.db_manager.get_active_model()
-                if active_model:
-                    model_id = active_model.model_id
-                    
-            pred['model_id'] = model_id
+            active_model = self.db_manager.get_active_model()
+            pred['model_id'] = active_model.model_id if active_model else None
             
             # Save predictions and return the generated ID
             pred_id = self.db_manager.save_prediction(pred)
