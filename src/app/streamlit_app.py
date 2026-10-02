@@ -21,14 +21,11 @@ st.set_page_config(
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.database.db_manager import DatabaseManager
-from src.database.models import TeamFeature, RawEloRating
-from src.features.elo_calculator import EloCalculator
-from src.features.team_features import TeamFeatureEngine
-from src.features.match_features import MatchFeatureEngine
+from src.database.models import TeamFeature
 from src.models.predictor import MatchPredictor
 from src.models.explainer import MatchExplainer
-from src.ingestion.download_data import run_ingestion
 from src.models.trainer import ModelTrainer
+import run_pipeline
 
 # ---------------------------------------------------------------------------
 # CSS
@@ -105,8 +102,7 @@ def load_context(db: DatabaseManager):
     try:
         matches = db.get_all_matches()
         team_feats = pd.read_sql(session.query(TeamFeature).statement, db.engine)
-        elo_hist   = pd.read_sql(session.query(RawEloRating).statement, db.engine)
-        return matches, team_feats, elo_hist
+        return matches, team_feats
     finally:
         session.close()
 
@@ -137,20 +133,8 @@ st.sidebar.markdown("### Operations")
 if match_cnt == 0 or model_ver == "N/A":
     st.sidebar.warning("Setup required - database is empty or model not trained.")
     if st.sidebar.button("Run Setup Pipeline"):
-        with st.spinner("Ingesting historical match data..."):
-            run_ingestion()
-        with st.spinner("Computing Elo ratings..."):
-            matches = db.get_all_matches()
-            elo_calc = EloCalculator()
-            elo_history = elo_calc.compute_all_ratings(matches)
-            db.save_elo_ratings(elo_history)
-        with st.spinner("Engineering features..."):
-            team_feats = TeamFeatureEngine().compute_team_features(matches, elo_history)
-            db.save_team_features(team_feats)
-            match_feats = MatchFeatureEngine().compute_match_features(matches, team_feats, elo_history)
-            db.save_match_features(match_feats)
-        with st.spinner("Training XGBoost models..."):
-            ModelTrainer().run_training_pipeline(match_feats, db_manager=db)
+        with st.spinner("Ingesting data, engineering features and training models..."):
+            run_pipeline.main()
         st.sidebar.success("Pipeline complete! Refresh the page.")
         st.rerun()
 else:
@@ -204,16 +188,16 @@ if home_team == away_team:
 
 if st.button("Predict Match Outcome"):
     with st.spinner("Generating predictions..."):
-        matches, team_feats_df, elo_hist_df = load_context(db)
+        matches, team_feats_df = load_context(db)
 
         pred = predictor.predict_match(
             home_team, away_team, tournament,
-            team_feats_df, elo_hist_df, matches,
+            team_feats_df, matches,
             save_to_db=True
         )
 
         feats_dict = predictor.feature_engine.create_prediction_features(
-            home_team, away_team, tournament, team_feats_df, elo_hist_df, matches
+            home_team, away_team, tournament, team_feats_df, matches
         )
         feats_df  = pd.DataFrame([feats_dict])
         feat_cols = predictor.feature_engine.get_feature_columns()
