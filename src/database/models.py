@@ -26,16 +26,6 @@ class RawEloRating(Base):
     date = Column(Date, nullable=False)
     elo_rating = Column(Float, nullable=False)
 
-class RawTeamStatistic(Base):
-    __tablename__ = 'raw_team_statistics'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    match_id = Column(Integer, ForeignKey('raw_matches.match_id'))
-    team = Column(String, nullable=False)
-    shots = Column(Integer)
-    possession = Column(Float)
-    xg = Column(Float)
-
 class TeamFeature(Base):
     __tablename__ = 'team_features'
 
