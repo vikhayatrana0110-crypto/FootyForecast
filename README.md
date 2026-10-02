@@ -31,16 +31,12 @@ footyforecast/
 ├── run_pipeline.py            # Full ETL + training pipeline (main entry point)
 ├── data/
 │   └── raw/                   # Local pipeline output (git-ignored)
-├── sql/
-│   └── schema.sql             # Database schema SQL statements
 ├── src/
 │   ├── app/
 │   │   ├── streamlit_app.py   # Streamlit UI implementation
-│   │   ├── data/              # Deployment copy of the dataset + database
 │   │   └── models/            # Deployment copy of trained .joblib artifacts
 │   ├── ingestion/
-│   │   ├── download_data.py   # CSV downloader + database loader
-│   │   └── statsbomb_loader.py # Optional StatsBomb xG enrichment
+│   │   └── download_data.py   # CSV downloader + database loader
 │   ├── database/
 │   │   ├── models.py          # SQLAlchemy database models
 │   │   └── db_manager.py      # CRUD and SQL database operations
@@ -53,6 +49,7 @@ footyforecast/
 │       ├── predictor.py       # Inference interface
 │       └── explainer.py       # SHAP explainer wrapper
 ├── tests/
+│   ├── test_db_manager.py     # Unit tests for model-version bookkeeping
 │   ├── test_elo.py            # Unit tests for Elo calculator
 │   ├── test_features.py       # Unit tests for feature engine
 │   └── test_predictor.py      # Unit tests for prediction and SHAP
