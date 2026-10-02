@@ -27,9 +27,6 @@ from src.models.explainer import MatchExplainer
 from src.models.trainer import ModelTrainer
 import run_pipeline
 
-# ---------------------------------------------------------------------------
-# CSS
-# ---------------------------------------------------------------------------
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
@@ -67,9 +64,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# Cached resources
-# ---------------------------------------------------------------------------
 @st.cache_resource
 def get_db() -> DatabaseManager:
     db = DatabaseManager()
@@ -106,10 +100,6 @@ def load_context(db: DatabaseManager):
     finally:
         session.close()
 
-
-# ---------------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------------
 st.markdown('<div class="gradient-title">FootyForecast</div>', unsafe_allow_html=True)
 st.markdown(
     "<p style='text-align:center;color:#888;font-size:1.2rem;margin-top:-10px;'>"
@@ -120,9 +110,6 @@ st.markdown(
 db  = get_db()
 match_cnt, team_cnt, model_ver = db_stats(db)
 
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
 st.sidebar.markdown("### Database & Model Status")
 st.sidebar.write(f"**Historical Matches:** {match_cnt:,}")
 st.sidebar.write(f"**Unique Teams:** {team_cnt}")
@@ -154,9 +141,6 @@ st.sidebar.markdown("""
 - Explainability: SHAP values
 """)
 
-# ---------------------------------------------------------------------------
-# Prediction workspace
-# ---------------------------------------------------------------------------
 if match_cnt == 0 or model_ver == "N/A":
     st.info("Predictor is disabled until data is ingested and a model is trained.")
     st.stop()
@@ -207,10 +191,6 @@ if st.button("Predict Match Outcome"):
         explanation    = explainer.explain_prediction(feats_df, feat_cols, class_idx)
         shap_plot_data = explainer.get_shap_plot_data(feats_df, feat_cols, class_idx)
 
-        # Persist the SHAP contributions alongside the prediction. predict_match()
-        # returns prediction_id only when it saved the prediction, and
-        # explanation_records() returns [] when the values would be heuristic
-        # rather than real SHAP - in either case there is nothing worth storing.
         prediction_id = pred.get("prediction_id")
         if prediction_id:
             records = explainer.explanation_records(feats_df, feat_cols)
@@ -218,7 +198,6 @@ if st.button("Predict Match Outcome"):
                 try:
                     db.save_prediction_explanations(prediction_id, records)
                 except Exception as e:
-                    # A logging failure must not take the prediction down with it.
                     st.warning(f"Could not save explanation details: {e}")
 
         st.session_state.update({
@@ -229,9 +208,6 @@ if st.button("Predict Match Outcome"):
             "away_feats": db.get_latest_team_features(away_team),
         })
 
-# ---------------------------------------------------------------------------
-# Results display
-# ---------------------------------------------------------------------------
 if "pred" not in st.session_state:
     st.stop()
 
@@ -286,16 +262,12 @@ for col, label, val, color in [
                           title_text=f"xG: {label}", margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
-# Verdict. Stated with its probability rather than bare: a 37/29/34 split is a
-# near coin-flip, and showing "Away Win" alone reads as far more certain than the
-# model actually is.
 verdict      = pred.get("outcome", "")
 most_likely  = pred.get("most_likely_outcome", verdict)
 verdict_prob = {"Home Win": p_home, "Draw": p_draw, "Away Win": p_away}.get(verdict, 0.0)
 
 st.markdown(f"### Prediction: **{verdict}** ({verdict_prob:.1%})")
 if most_likely != verdict:
-    # The verdict came from the draw threshold rather than the top probability.
     st.caption(
         f"Called a draw because the draw probability ({p_draw:.1%}) is high for this "
         f"fixture, though {most_likely.lower()} is the single most likely result."
@@ -310,7 +282,6 @@ if conf < 0.05:
     st.caption("The top two outcomes are within 5 percentage points: treat this as closely matched rather than a firm call.")
 st.progress(min(1.0, conf / 0.6))
 
-# SHAP chart
 st.markdown("## ML Model Explanation (SHAP)")
 exp       = st.session_state["explanation"]
 shap_data = st.session_state["shap_plot"]
@@ -351,7 +322,6 @@ with cn:
           <span style='color:#ff5252'>Contribution: {f['shap_value']:.3f}</span>
         </div>""", unsafe_allow_html=True)
 
-# Radar
 st.markdown("## Team Comparison")
 h_feats = st.session_state.get("home_feats")
 a_feats = st.session_state.get("away_feats")

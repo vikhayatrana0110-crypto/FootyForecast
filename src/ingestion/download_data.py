@@ -24,7 +24,6 @@ def load_results_to_db(db_manager: DatabaseManager, csv_path: str = 'data/raw/re
     df = pd.read_csv(csv_path, parse_dates=['date'])
     df = df[df['date'] >= pd.to_datetime(min_date)]
 
-    # Fill any empty scores/venues
     df['home_score'] = df['home_score'].fillna(0).astype(int)
     df['away_score'] = df['away_score'].fillna(0).astype(int)
     df['neutral'] = df['neutral'].fillna(False).astype(bool)
@@ -47,7 +46,6 @@ def run_ingestion(min_date: str = '2000-01-01') -> DatabaseManager:
     return db_manager
 
 if __name__ == '__main__':
-    # Add project root to sys.path for running directly
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 

@@ -3,7 +3,6 @@ import pandas as pd
 import shap
 from typing import List, Dict, Any
 
-# Class order matches the model: 0=Away Win, 1=Draw, 2=Home Win
 CLASS_LABELS = ['Away Win', 'Draw', 'Home Win']
 
 class MatchExplainer:
@@ -14,18 +13,12 @@ class MatchExplainer:
     def _shap_by_class(self, X: pd.DataFrame) -> List[np.ndarray]:
         """SHAP values for the first row of X, as per_class[class_index] -> one value per feature."""
         shap_values = self.explainer.shap_values(X)
-        # Multi-class SHAP comes back either as a list of (samples, features) arrays
-        # or as one (samples, features, classes) array, depending on the shap version.
         if isinstance(shap_values, list):
             return [np.asarray(sv)[0] for sv in shap_values]
         return [shap_values[0, :, i] for i in range(shap_values.shape[2])]
 
     def explain_prediction(self, features_df: pd.DataFrame, feature_names: List[str], predicted_class: int) -> Dict[str, Any]:
-        """
-        Generate SHAP values for a prediction.
-        Returns:
-            A dictionary containing SHAP values, feature importance, and lists of positive and negative factors.
-        """
+        """SHAP contributions for the predicted class, top positive/negative factors and a summary."""
         X = features_df[feature_names]
         shap_class = self._shap_by_class(X)[predicted_class]
 
@@ -35,7 +28,6 @@ class MatchExplainer:
         ]
         feature_contributions.sort(key=lambda x: abs(x['shap_value']), reverse=True)
 
-        # Most positive first / most negative first
         positives = sorted((fc for fc in feature_contributions if fc['shap_value'] > 0), key=lambda x: -x['shap_value'])
         negatives = sorted((fc for fc in feature_contributions if fc['shap_value'] < 0), key=lambda x: x['shap_value'])
 
@@ -49,10 +41,7 @@ class MatchExplainer:
         }
 
     def explanation_records(self, features_df: pd.DataFrame, feature_names: List[str]) -> List[Dict[str, Any]]:
-        """
-        Return one record per feature carrying its SHAP value for all three classes,
-        shaped for DatabaseManager.save_prediction_explanations().
-        """
+        """Per-feature SHAP values for all three classes, shaped for save_prediction_explanations()."""
         X = features_df[feature_names]
         per_class = self._shap_by_class(X)
         if len(per_class) < 3:

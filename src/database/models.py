@@ -58,7 +58,7 @@ class MatchFeature(Base):
     h2h_advantage = Column(Float)
     is_neutral_venue = Column(Integer)
     tournament_importance = Column(Float)
-    result = Column(Integer)  # 0=away win, 1=draw, 2=home win
+    result = Column(Integer)
     home_goals = Column(Integer)
     away_goals = Column(Integer)
 
@@ -69,13 +69,9 @@ class ModelVersion(Base):
     model_name = Column(String, nullable=False)
     version = Column(String, nullable=False)
     training_date = Column(Date, nullable=False)
-    # Classifier metrics; left NULL for regressors.
     accuracy = Column(Float)
     log_loss = Column(Float)
     f1_score = Column(Float)
-    # Regressor metrics; left NULL for the classifier. Before these existed,
-    # MAE and RMSE were written into accuracy and log_loss, which made a
-    # regressor look like it had an accuracy of 1.05.
     mae = Column(Float)
     rmse = Column(Float)
     model_path = Column(String)

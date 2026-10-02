@@ -7,13 +7,7 @@ from src.database.models import ModelVersion, create_all_tables
 
 
 class TestSaveModelVersion(unittest.TestCase):
-    """
-    Exercise save_model_version against a throwaway in-memory database.
-
-    DatabaseManager builds a PostgreSQL URL from the environment, so the
-    constructor is bypassed and the engine swapped for SQLite. Only the row
-    bookkeeping is under test here, which is backend independent.
-    """
+    """Runs against in-memory SQLite; the constructor is skipped because it needs Postgres."""
 
     def setUp(self):
         self.db = DatabaseManager.__new__(DatabaseManager)
@@ -30,12 +24,7 @@ class TestSaveModelVersion(unittest.TestCase):
             session.close()
 
     def test_repeated_saves_reuse_one_row(self):
-        """Retraining must update the existing row, not append a new one.
-
-        Every pipeline run previously inserted a fresh row per model, so the
-        table reached 51 rows describing 3 models and the training history
-        became unreadable.
-        """
+        """Retraining updates the existing row instead of adding another."""
         ids = [
             self.db.save_model_version(
                 'outcome_classifier', '1.0',
@@ -86,7 +75,6 @@ class TestSaveModelVersion(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertTrue(rows['outcome_classifier'].is_active)
         self.assertTrue(rows['home_goals_regressor'].is_active)
-        # Regressor metrics must not leak into the classifier columns.
         self.assertIsNone(rows['home_goals_regressor'].accuracy)
         self.assertAlmostEqual(rows['home_goals_regressor'].mae, 1.05)
 
