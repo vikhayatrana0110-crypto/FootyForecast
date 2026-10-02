@@ -7,19 +7,15 @@ from src.models.explainer import MatchExplainer
 
 class TestPredictorAndExplainer(unittest.TestCase):
     def setUp(self):
-        # Create mock models
         self.mock_classifier = MagicMock()
-        # predict_proba returns [Away Prob, Draw Prob, Home Prob]
-        # Let's say Brazil (home) vs Argentina (away): 50% Win, 30% Draw, 20% Loss
         self.mock_classifier.predict_proba = MagicMock(return_value=np.array([[0.20, 0.30, 0.50]]))
-        
+
         self.mock_home_goals = MagicMock()
         self.mock_home_goals.predict = MagicMock(return_value=np.array([2.1]))
-        
+
         self.mock_away_goals = MagicMock()
         self.mock_away_goals.predict = MagicMock(return_value=np.array([1.2]))
-        
-        # Instantiate MatchPredictor using mock models
+
         self.predictor = MatchPredictor.__new__(MatchPredictor)
         self.predictor.classifier = self.mock_classifier
         self.predictor.home_goals_model = self.mock_home_goals
@@ -46,32 +42,22 @@ class TestPredictorAndExplainer(unittest.TestCase):
     def test_prediction_output(self):
         feature_vector = {'f1': 1.0, 'f2': 0.5}
         pred = self.predictor.predict(feature_vector)
-        
+
         self.assertAlmostEqual(pred['home_win_prob'], 0.50)
         self.assertAlmostEqual(pred['draw_prob'], 0.30)
         self.assertAlmostEqual(pred['away_win_prob'], 0.20)
-        
-        # Probs must sum to 1.0
+
         self.assertAlmostEqual(pred['home_win_prob'] + pred['draw_prob'] + pred['away_win_prob'], 1.0)
-        
-        # Expected Goals
+
         self.assertAlmostEqual(pred['expected_home_goals'], 2.1)
         self.assertAlmostEqual(pred['expected_away_goals'], 1.2)
-        
-        # Outcome label
+
         self.assertEqual(pred['outcome'], 'Home Win')
 
     def test_explainer_uses_real_shap_with_a_real_model(self):
-        """SHAP values must actually be produced, not silently fall back.
-
-        explain_prediction() wraps its SHAP path in a broad `except`, so a bug in
-        that path degrades to the heuristic without surfacing an error. A
-        `list.sort(ascending=...)` TypeError hid there and meant real SHAP values
-        were never returned. An empty `shap_values` dict is the fallback's
-        signature, so assert it is populated.
-        """
+        """A real XGBoost model gets real SHAP values back."""
         try:
-            import shap  # noqa: F401
+            import shap
             import xgboost as xgb
         except ImportError:
             self.skipTest("shap/xgboost not installed")
@@ -91,11 +77,9 @@ class TestPredictorAndExplainer(unittest.TestCase):
         self.assertTrue(result['shap_values'],
                         "explain_prediction fell back to the heuristic instead of using SHAP")
 
-        # Negative factors must run most-negative first.
         negs = [f['shap_value'] for f in result['negative_factors']]
         self.assertEqual(negs, sorted(negs), "negative factors are not sorted ascending")
 
-        # One record per feature, carrying all three class contributions.
         records = explainer.explanation_records(X.head(1), cols)
         self.assertEqual(len(records), len(cols))
         for r in records:
@@ -104,15 +88,9 @@ class TestPredictorAndExplainer(unittest.TestCase):
             self.assertIn('shap_value_away', r)
 
     def test_probabilities_mapped_by_class_not_position(self):
-        """A model missing an outcome class must not mislabel the remaining ones.
-
-        predict() previously read probs[0], probs[1], probs[2] as away/draw/home.
-        A classifier trained on data containing no Draws exposes classes_ == [0, 2]
-        and returns two columns, so column 1 (Home Win) was reported as the Draw
-        probability and probs[2] raised IndexError.
-        """
+        """A model without a Draw class must not mislabel the remaining columns."""
         predictor = self._predictor_with(
-            classes=np.array([0, 2]),                        # no Draw class
+            classes=np.array([0, 2]),
             probs=np.array([[0.30, 0.70]]))
         result = predictor.predict({'f1': 1.0, 'f2': 2.0})
 
@@ -134,14 +112,7 @@ class TestPredictorAndExplainer(unittest.TestCase):
         self.assertEqual(result['outcome'], 'Home Win')
 
     def test_draw_called_when_probability_clears_threshold(self):
-        """A draw must be the verdict once its probability clears the threshold.
-
-        Argmax could effectively never return 'Draw': draw probability tops out
-        around 0.42 and is usually second, so the verdict was Home or Away in
-        4611 of 4652 test matches while draws are 24% of results.
-        """
-        # Draw clears the threshold and the match is close: away 0.31, draw 0.31,
-        # home 0.38 - the leader is 0.07 ahead, inside the margin.
+        """Draw is the verdict once its probability clears the threshold."""
         predictor = self._predictor_with(
             classes=np.array([0, 1, 2]),
             probs=np.array([[0.31, 0.31, 0.38]]))
@@ -175,16 +146,11 @@ class TestPredictorAndExplainer(unittest.TestCase):
         self.assertAlmostEqual(result['home_win_prob'], 0.35)
 
     def test_draw_not_called_when_one_side_is_clearly_favoured(self):
-        """A high draw probability alone must not override a dominant favourite.
-
-        On the threshold alone the rule fired on fixtures where the leading side
-        was 64% likely, which is not a draw by any reading. The margin requires
-        the match to actually be close before the verdict becomes a draw.
-        """
+        """A high draw probability doesn't override a clear favourite."""
         from src.models.predictor import DRAW_VERDICT_THRESHOLD, DRAW_VERDICT_MARGIN
 
         draw = DRAW_VERDICT_THRESHOLD + 0.02
-        home = draw + DRAW_VERDICT_MARGIN + 0.05      # comfortably clear of the draw
+        home = draw + DRAW_VERDICT_MARGIN + 0.05
         away = 1.0 - draw - home
         predictor = self._predictor_with(
             classes=np.array([0, 1, 2]),

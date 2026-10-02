@@ -16,20 +16,10 @@ from src.database.models import (
 
 class DatabaseManager:
     def __init__(self):
-        """
-        Connect to the Supabase PostgreSQL database.
-
-        Connection details come from the environment (loaded from .env locally,
-        or injected from st.secrets by the Streamlit app). Nothing is hardcoded:
-        the repository is public, so the host must not be committed.
-        """
-        # Host and password identify and unlock the database, so they have no
-        # defaults - a missing value must fail loudly rather than silently
-        # connecting somewhere unintended.
+        """Connect to Supabase Postgres using credentials from the environment (.env or Streamlit secrets)."""
         DB_HOST = os.getenv("SUPABASE_HOST")
         DB_PASSWORD = os.getenv("SUPABASE_PASSWORD")
 
-        # These are Supabase conventions, not secrets, so defaults are safe.
         DB_PORT = os.getenv("SUPABASE_PORT", "5432")
         DB_USER = os.getenv("SUPABASE_USER", "postgres")
         DB_NAME = os.getenv("SUPABASE_DB", "postgres")
@@ -47,16 +37,12 @@ class DatabaseManager:
                 "when deploying."
             )
 
-        # Credentials are percent-encoded: an unescaped '@', ':' or '/' in the
-        # password would otherwise be parsed as part of the URL structure.
         DATABASE_URL = (
             f"postgresql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}"
             f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
         )
 
         self.engine = create_engine(DATABASE_URL)
-        # expire_on_commit=False so ORM objects returned from a closed session
-        # (e.g. get_active_model) keep their loaded attributes.
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def get_session(self) -> Session:
@@ -67,14 +53,7 @@ class DatabaseManager:
         self._apply_column_migrations()
 
     def _apply_column_migrations(self):
-        """
-        Add columns introduced after a table was first created.
-
-        create_all_tables() only creates missing *tables*, so a new column on an
-        existing table would otherwise never appear on a deployed database. Each
-        statement is guarded by IF NOT EXISTS, so this is safe to run on every
-        startup and on a database that is already up to date.
-        """
+        """create_all() won't add columns to existing tables, so newer columns are added here."""
         statements = [
             "ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS mae DOUBLE PRECISION",
             "ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS rmse DOUBLE PRECISION",
@@ -129,32 +108,15 @@ class DatabaseManager:
         return {c.name: getattr(latest, c.name) for c in TeamFeature.__table__.columns if c.name != 'feature_id'}
 
     def save_model_version(self, name: str, version: str, metrics: Dict[str, float], model_path: str) -> int:
-        """
-        Save training metrics and metadata for a model version.
+        """One row per (name, version), updated in place, and the only active row for that name.
 
-        Metrics are routed to the column that matches them: classifiers populate
-        accuracy/log_loss/f1_score, regressors populate mae/rmse, and whichever
-        set does not apply stays NULL. Anything absent from `metrics` is simply
-        not written, so callers pass only what they actually measured.
-
-        A given model name and version occupies one row, updated in place. This
-        previously inserted unconditionally, so every pipeline run added three
-        rows describing the same three models - 51 rows for 3 models after 17
-        runs - which made the training history unreadable and hid the fact that
-        the recorded metrics no longer matched the committed artifacts.
-
-        Rows for earlier runs are left untouched rather than cleaned up here:
-        `predictions.model_id` points at them, so deleting them would orphan
-        prediction records.
+        Old versions are kept since predictions reference them.
         """
         with self.SessionLocal.begin() as session:
-            # Only one row per model name may be active.
             session.query(ModelVersion).filter(
                 ModelVersion.model_name == name
             ).update({ModelVersion.is_active: False})
 
-            # Reuse the row for this name and version if one exists. Where older
-            # duplicates are present, the most recent is the one carried forward.
             record = session.query(ModelVersion).filter(
                 ModelVersion.model_name == name,
                 ModelVersion.version == version
